@@ -1,7 +1,6 @@
 /**
- * ghgen v2 — email auth + pool claims with regions + limits
+ * ghgen v3 — username/password + email code auth
  * Env: POOL_KEY, UPLOAD_SECRET, RESEND_API_KEY
- * Discord OAuth: DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET
  */
 
 const CORS = {
@@ -81,7 +80,38 @@ function validUsername(u) { return /^[A-Za-z0-9_]{3,32}$/.test(u); }
 function validRobloxUsername(u) { return /^[A-Za-z0-9_]{3,20}$/.test(u); }
 
 // ============================================================
-//  ENV HELPERS (never hardcode)
+//  PASSWORD HASHING (PBKDF2)
+// ============================================================
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(password),
+    "PBKDF2", false, ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
+    keyMaterial, 256
+  );
+  return { hash: bytesToB64(new Uint8Array(bits)), salt: bytesToB64(salt) };
+}
+
+async function verifyPassword(password, hashB64, saltB64) {
+  try {
+    const salt = b64ToBytes(saltB64);
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode(password),
+      "PBKDF2", false, ["deriveBits"]
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
+      keyMaterial, 256
+    );
+    return bytesToB64(new Uint8Array(bits)) === hashB64;
+  } catch { return false; }
+}
+
+// ============================================================
+//  ENV HELPERS
 // ============================================================
 async function getPoolKey(env) {
   const raw = env.POOL_KEY;
@@ -111,55 +141,40 @@ async function decryptPayload(env, stored) {
 // ============================================================
 async function sendEmail(env, to, code) {
   const apiKey = env.RESEND_API_KEY;
-  if (!apiKey) {
-    console.error("sendEmail: RESEND_API_KEY not set");
-    return { ok: false, error: "RESEND_API_KEY_not_set" };
-  }
+  if (!apiKey) { console.error("sendEmail: RESEND_API_KEY not set"); return { ok: false, error: "RESEND_API_KEY_not_set" }; }
 
-  const html = `
+  const emailHtml = `
     <div style="font-family:-apple-system,sans-serif;background:#0c0c0d;color:#e8e8ea;padding:40px;border-radius:12px;max-width:480px;margin:0 auto">
       <div style="font-size:22px;font-weight:800;color:#c9a227;letter-spacing:2px;margin-bottom:20px">GHGen</div>
       <p style="color:#e8e8ea;margin:0 0 12px">Your verification code:</p>
       <div style="font-size:34px;font-weight:700;letter-spacing:8px;color:#c9a227;background:#18181b;padding:22px;border-radius:10px;text-align:center;margin:16px 0;font-family:ui-monospace,monospace">${code}</div>
       <p style="color:#8a8a93;font-size:13px;margin:16px 0 0">Expires in 10 minutes.</p>
       <p style="color:#5a5a63;font-size:12px;margin:24px 0 0;padding-top:16px;border-top:1px solid #27272a">If you didn't request this, ignore this email.</p>
-    </div>
-  `;
+    </div>`;
 
   const payload = {
     from: "GHGen <support@gen.greedyhudzell.xyz>",
     to: [to],
     subject: "GHGen — verification code",
-    html,
+    html: emailHtml,
   };
 
   let res;
   try {
     res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "User-Agent": "GHGen-Worker/1.0",
-      },
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json", "User-Agent": "GHGen-Worker/1.0" },
       body: JSON.stringify(payload),
     });
   } catch (e) {
-    console.error("sendEmail fetch error:", String(e));
     return { ok: false, error: "fetch_failed", message: String(e.message || e) };
   }
 
   const bodyText = await res.text().catch(() => "");
-  console.log("resend response:", res.status, bodyText.slice(0, 500));
-
   if (!res.ok) {
     let parsed = null;
     try { parsed = JSON.parse(bodyText); } catch {}
-    return {
-      ok: false,
-      error: `resend_http_${res.status}`,
-      message: (parsed && (parsed.message || parsed.error)) || bodyText.slice(0, 200),
-    };
+    return { ok: false, error: `resend_http_${res.status}`, message: (parsed && (parsed.message || parsed.error)) || bodyText.slice(0, 200) };
   }
   return { ok: true };
 }
@@ -198,7 +213,7 @@ async function loadKeyStatus(env, key) {
 }
 
 // ============================================================
-//  HTML
+//  PAGE SHELL
 // ============================================================
 function pageShell(title, content) {
   return `<!doctype html>
@@ -256,11 +271,14 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .reset-bar b{color:var(--text);font-family:ui-monospace,monospace}
 .counter{font-size:28px;font-weight:700;color:var(--accent);font-family:ui-monospace,monospace}
 .counter span{color:var(--muted);font-size:15px;font-weight:500}
-.region-select{display:flex;gap:10px;align-items:flex-end}
-.region-select > div:first-child{flex:1}
-.region-hint{margin-top:8px;padding:10px 12px;background:#0e0e11;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--muted);line-height:1.7;max-height:150px;overflow-y:auto}
-.region-hint .r{display:flex;justify-content:space-between;padding:2px 0}
-.region-hint .r b{color:var(--text);font-weight:500}
+
+/* NEW: auth tabs */
+.auth-tabs{display:flex;gap:4px;margin-bottom:20px;background:var(--bg2);padding:4px;border-radius:10px;border:1px solid var(--line)}
+.auth-tabs button{flex:1;background:transparent;border:none;padding:10px;font-size:13px;font-weight:600;color:var(--muted);border-radius:7px;cursor:pointer}
+.auth-tabs button.active{background:var(--card);color:var(--text)}
+.auth-tabs button:hover{color:var(--text)}
+.form-row{display:flex;gap:12px}
+.form-row > *{flex:1}
 </style>
 </head>
 <body>
@@ -279,97 +297,143 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 </html>`;
 }
 
+// ============================================================
+//  AUTH PAGE
+// ============================================================
 function authPage(msg = "") {
   return pageShell("Auth", `
-  <h1>Sign in / Register</h1>
-  <p class="sub">Enter your email — we'll send a verification code.</p>
+  <div style="max-width:440px;margin:40px auto">
+    <h1>Welcome to GHGen</h1>
+    <p class="sub">Sign in or create a new account.</p>
 
-  <div id="step1" class="card">
-    ${msg ? `<p class="err" style="margin-bottom:12px">${msg}</p>` : ""}
-    <label>Email</label>
-    <input id="email" type="email" placeholder="you@gmail.com" autocomplete="email"/>
-    <button class="primary" id="btn-send" style="width:100%;margin-top:16px">Send code</button>
-    <p class="note" id="s1-out"></p>
-  </div>
+    <div class="card">
+      <div class="auth-tabs">
+        <button id="tab-login" class="active">Login</button>
+        <button id="tab-register">Register</button>
+      </div>
 
-  <div id="step2" class="card" style="display:none">
-    <p class="muted" style="margin-bottom:10px">Code sent to <b id="email-shown"></b> (expires in 10 min)</p>
-    <label>Verification code</label>
-    <input id="code" type="text" maxlength="6" inputmode="numeric" placeholder="123456" autocomplete="one-time-code"/>
-    <button class="primary" id="btn-verify" style="width:100%;margin-top:16px">Verify</button>
-    <p class="note" id="s2-out"></p>
-  </div>
+      <!-- LOGIN -->
+      <div id="pane-login">
+        <label>Username</label>
+        <input id="login-user" autocomplete="username" placeholder="your_ghgen_username"/>
+        <label>Password</label>
+        <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••"/>
+        <button class="primary" id="btn-login" style="width:100%;margin-top:18px">Continue</button>
+        <p class="note" id="login-out"></p>
+      </div>
 
-  <div id="step3" class="card" style="display:none">
-    <p class="muted" style="margin-bottom:12px">New email — complete registration:</p>
-    <label>Key</label>
-    <input id="reg-key" placeholder="GH-XXXX-XXXX-XXXX" autocomplete="off"/>
-    <label>Roblox username</label>
-    <input id="reg-rbx" placeholder="Not display name" autocomplete="off"/>
-    <label>GHGen username</label>
-    <input id="reg-user" placeholder="3-32 chars, A-Za-z0-9_" autocomplete="off"/>
-    <button class="primary" id="btn-register" style="width:100%;margin-top:16px">Create account</button>
-    <p class="note" id="s3-out"></p>
+      <!-- REGISTER -->
+      <div id="pane-register" style="display:none">
+        <label>Username</label>
+        <input id="reg-user" placeholder="3-32 chars, A-Za-z0-9_" autocomplete="username"/>
+        <label>Email</label>
+        <input id="reg-email" type="email" placeholder="you@gmail.com" autocomplete="email"/>
+        <label>Password</label>
+        <input id="reg-pass" type="password" placeholder="min 8 chars" autocomplete="new-password"/>
+        <label>Roblox username</label>
+        <input id="reg-rbx" placeholder="Not display name" autocomplete="off"/>
+        <label>Key <span class="muted" style="font-weight:400">(optional for now)</span></label>
+        <input id="reg-key" placeholder="GH-XXXX-XXXX-XXXX" autocomplete="off"/>
+        <button class="primary" id="btn-register" style="width:100%;margin-top:18px">Continue</button>
+        <p class="note" id="register-out"></p>
+      </div>
+    </div>
+
+    <!-- VERIFY (показывается после login-start/register-start) -->
+    <div id="pane-verify" class="card" style="display:none">
+      <p class="muted" style="margin-bottom:10px">Code sent to <b id="verify-email">your email</b>. Expires in 10 min.</p>
+      <label>Verification code</label>
+      <input id="verify-code" maxlength="6" inputmode="numeric" placeholder="123456" autocomplete="one-time-code"/>
+      <button class="primary" id="btn-verify" style="width:100%;margin-top:16px">Verify</button>
+      <p class="note" id="verify-out"></p>
+    </div>
   </div>
 
   <script>
-  let currentEmail = "";
+  let mode = 'login';
 
-  document.getElementById('btn-send').addEventListener('click', async () => {
-    const email = document.getElementById('email').value.trim();
-    const out = document.getElementById('s1-out');
-    if (!email) { out.className = 'note err'; out.textContent = 'Enter email'; return; }
-    out.className = 'note'; out.textContent = 'Sending…';
-    const r = await fetch('/api/auth/send-code', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ email })
-    });
-    const d = await r.json();
-    if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
-    currentEmail = email;
-    document.getElementById('step1').style.display = 'none';
-    document.getElementById('step2').style.display = 'block';
-    document.getElementById('email-shown').textContent = email;
-    document.getElementById('code').focus();
+  document.getElementById('tab-login').addEventListener('click', () => {
+    mode = 'login';
+    document.getElementById('tab-login').classList.add('active');
+    document.getElementById('tab-register').classList.remove('active');
+    document.getElementById('pane-login').style.display = 'block';
+    document.getElementById('pane-register').style.display = 'none';
+  });
+  document.getElementById('tab-register').addEventListener('click', () => {
+    mode = 'register';
+    document.getElementById('tab-register').classList.add('active');
+    document.getElementById('tab-login').classList.remove('active');
+    document.getElementById('pane-register').style.display = 'block';
+    document.getElementById('pane-login').style.display = 'none';
   });
 
-  document.getElementById('btn-verify').addEventListener('click', async () => {
-    const code = document.getElementById('code').value.trim();
-    const out = document.getElementById('s2-out');
-    out.className = 'note'; out.textContent = 'Verifying…';
-    const r = await fetch('/api/auth/verify', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ email: currentEmail, code })
+  function showVerify(email) {
+    document.querySelector('.auth-tabs').parentElement.style.display = 'none';
+    document.getElementById('pane-login').style.display = 'none';
+    document.getElementById('pane-register').style.display = 'none';
+    document.getElementById('pane-verify').style.display = 'block';
+    document.getElementById('verify-email').textContent = email;
+    document.getElementById('verify-code').focus();
+  }
+
+  async function post(path, body) {
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      credentials: 'same-origin'
     });
-    const d = await r.json();
+    return await r.json();
+  }
+
+  document.getElementById('btn-login').addEventListener('click', async () => {
+    const out = document.getElementById('login-out');
+    out.className = 'note'; out.textContent = 'Checking…';
+    const username = document.getElementById('login-user').value.trim();
+    const password = document.getElementById('login-pass').value;
+    if (!username || !password) { out.className = 'note err'; out.textContent = 'Enter username and password'; return; }
+    const d = await post('/api/auth/login-start', { username, password });
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
-    if (d.mode === 'login') { window.location.href = '/dashboard'; return; }
-    document.getElementById('step2').style.display = 'none';
-    document.getElementById('step3').style.display = 'block';
+    showVerify(d.email_masked);
   });
 
   document.getElementById('btn-register').addEventListener('click', async () => {
-    const key = document.getElementById('reg-key').value.trim();
-    const roblox_username = document.getElementById('reg-rbx').value.trim();
-    const ghgen_username = document.getElementById('reg-user').value.trim();
-    const out = document.getElementById('s3-out');
+    const out = document.getElementById('register-out');
     out.className = 'note'; out.textContent = 'Creating…';
-    const r = await fetch('/api/auth/register', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ email: currentEmail, key, roblox_username, ghgen_username })
-    });
-    const d = await r.json();
+    const payload = {
+      username: document.getElementById('reg-user').value.trim(),
+      email: document.getElementById('reg-email').value.trim().toLowerCase(),
+      password: document.getElementById('reg-pass').value,
+      roblox_username: document.getElementById('reg-rbx').value.trim(),
+      key: document.getElementById('reg-key').value.trim()
+    };
+    if (!payload.username || !payload.email || !payload.password || !payload.roblox_username) {
+      out.className = 'note err'; out.textContent = 'Fill all required fields'; return;
+    }
+    const d = await post('/api/auth/register-start', payload);
+    if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
+    showVerify(d.email_masked);
+  });
+
+  document.getElementById('btn-verify').addEventListener('click', async () => {
+    const out = document.getElementById('verify-out');
+    out.className = 'note'; out.textContent = 'Verifying…';
+    const code = document.getElementById('verify-code').value.trim();
+    const d = await post('/api/auth/verify', { code });
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
     window.location.href = '/dashboard';
   });
 
-  document.getElementById('code').addEventListener('keydown', e => {
+  document.getElementById('verify-code').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('btn-verify').click();
   });
   </script>
   `);
 }
 
+// ============================================================
+//  DASHBOARD (пока минимальный — полный редизайн в следующем шаге)
+// ============================================================
 function dashboardPage(user, keyStatus) {
   return pageShell("Dashboard", `
   <h1>Dashboard</h1>
@@ -380,7 +444,7 @@ function dashboardPage(user, keyStatus) {
   </div>
 
   <div class="reset-bar">
-    <span>Key: <b>${escapeHtml(user.key)}</b> · Plan: <b>${keyStatus.plan || '—'}</b></span>
+    <span>Key: <b>${escapeHtml(user.key || '—')}</b> · Plan: <b>${keyStatus.plan || '—'}</b></span>
     <span>Reset in: <b id="reset-in">—</b></span>
   </div>
 
@@ -390,15 +454,12 @@ function dashboardPage(user, keyStatus) {
       <div class="region-select">
         <div>
           <label>Region</label>
-          <select id="region">
-            <option value="">🎲 Random</option>
-          </select>
+          <select id="region"><option value="">🎲 Random</option></select>
         </div>
         <button class="primary" id="btn-claim" style="min-width:150px">Claim account</button>
       </div>
       <div class="region-hint" id="region-hint"></div>
       <p class="note" id="claim-out"></p>
-      <p class="why">Why? I am generating these accounts alone, the pool is not big</p>
     </div>
     <div class="card">
       <h2>Your limit</h2>
@@ -417,15 +478,11 @@ function dashboardPage(user, keyStatus) {
   </div>
 
   <script>
-  const USER_KEY = ${JSON.stringify(user.key)};
+  const USER_KEY = ${JSON.stringify(user.key || '')};
   function mask(v){ if(!v) return '—'; const s=String(v); if(s.length<=6) return s[0]+'•••'; return s.slice(0,3)+'•••'+s.slice(-2); }
   function fmtHMS(sec){ const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
 
-  let resetInSec = 0;
-  let cooldownSec = 20;
-  let limitMax = 3;
-  let limitUsed = 0;
-  let cooldownTimer = null;
+  let resetInSec = 0, cooldownSec = 20, limitMax = 3, limitUsed = 0, cooldownTimer = null;
 
   async function loadState() {
     const r = await fetch('/api/state', { credentials: 'same-origin' });
@@ -446,13 +503,8 @@ function dashboardPage(user, keyStatus) {
     const banner = document.getElementById('limit-banner');
     const timeEl = document.getElementById('limit-time');
     const btn = document.getElementById('btn-claim');
-    if (limitUsed >= limitMax) {
-      banner.classList.add('show');
-      timeEl.textContent = fmtHMS(resetInSec) + ' left';
-      btn.disabled = true;
-    } else {
-      banner.classList.remove('show');
-    }
+    if (limitUsed >= limitMax) { banner.classList.add('show'); timeEl.textContent = fmtHMS(resetInSec) + ' left'; btn.disabled = true; }
+    else banner.classList.remove('show');
   }
 
   async function loadRegions() {
@@ -460,13 +512,10 @@ function dashboardPage(user, keyStatus) {
     const d = await r.json();
     if (!d.ok) return;
     const sel = document.getElementById('region');
-    sel.innerHTML = '<option value="">🎲 Random</option>' +
-      d.regions.map(x => '<option value="' + x.region + '">' + x.region + ' — ' + x.count + '</option>').join('');
+    sel.innerHTML = '<option value="">🎲 Random</option>' + d.regions.map(x => '<option value="' + x.region + '">' + x.region + ' — ' + x.count + '</option>').join('');
     const hint = document.getElementById('region-hint');
     if (!d.regions.length) { hint.textContent = 'Pool is empty.'; return; }
-    hint.innerHTML = d.regions.map(x =>
-      '<div class="r"><b>' + x.region + '</b><span>' + x.count + ' available</span></div>'
-    ).join('');
+    hint.innerHTML = d.regions.map(x => '<div class="r"><b>' + x.region + '</b><span>' + x.count + ' available</span></div>').join('');
   }
 
   async function loadAccounts() {
@@ -514,13 +563,10 @@ function dashboardPage(user, keyStatus) {
     cooldownTimer = setInterval(() => {
       left -= 1;
       if (left <= 0) {
-        clearInterval(cooldownTimer);
-        cooldownTimer = null;
+        clearInterval(cooldownTimer); cooldownTimer = null;
         btn.textContent = 'Claim account';
         if (limitUsed < limitMax) btn.disabled = false;
-      } else {
-        btn.textContent = 'Wait ' + left + 's';
-      }
+      } else btn.textContent = 'Wait ' + left + 's';
     }, 1000);
   }
 
@@ -538,47 +584,25 @@ function dashboardPage(user, keyStatus) {
       });
       const d = await r.json();
       if (d.ok) {
-        out.className = 'note ok';
-        out.textContent = 'Claimed: ' + d.account.u;
+        out.className = 'note ok'; out.textContent = 'Claimed: ' + d.account.u;
         limitUsed += 1;
         document.getElementById('counter').innerHTML = limitUsed + ' <span>/ ' + limitMax + '</span>';
-        updateLimitBanner();
-        loadAccounts();
-        loadRegions();
-        startCooldown(cooldownSec);
-      } else if (d.error === 'cooldown') {
-        out.className = 'note err'; out.textContent = d.message || 'Cooldown';
-        startCooldown(d.wait_seconds || cooldownSec);
-      } else if (d.error === 'daily_limit') {
-        out.className = 'note err'; out.textContent = 'Daily limit reached';
-        resetInSec = d.reset_in || 0;
-        updateLimitBanner();
-      } else if (d.error === 'pool_empty') {
-        out.className = 'note err'; out.textContent = 'No accounts in this region. Try Random.';
-        btn.disabled = false;
-      } else if (d.error === 'key_expired' || d.error === 'key_revoked' || d.error === 'key_invalid') {
-        out.className = 'note err'; out.textContent = 'Your key is ' + d.error.replace('key_','') + '. Cannot claim.';
-      } else {
-        out.className = 'note err'; out.textContent = d.error || 'error';
-        btn.disabled = false;
-      }
-    } catch(e) {
-      out.className = 'note err'; out.textContent = String(e); btn.disabled = false;
-    }
+        updateLimitBanner(); loadAccounts(); loadRegions(); startCooldown(cooldownSec);
+      } else if (d.error === 'cooldown') { out.className = 'note err'; out.textContent = d.message || 'Cooldown'; startCooldown(d.wait_seconds || cooldownSec); }
+      else if (d.error === 'daily_limit') { out.className = 'note err'; out.textContent = 'Daily limit reached'; resetInSec = d.reset_in || 0; updateLimitBanner(); }
+      else if (d.error === 'pool_empty') { out.className = 'note err'; out.textContent = 'No accounts in this region. Try Random.'; btn.disabled = false; }
+      else if (d.error?.startsWith('key_')) { out.className = 'note err'; out.textContent = 'Your key is ' + d.error.replace('key_','') + '.'; }
+      else { out.className = 'note err'; out.textContent = d.error || 'error'; btn.disabled = false; }
+    } catch(e) { out.className = 'note err'; out.textContent = String(e); btn.disabled = false; }
   });
 
-  // tick reset timer every second
   setInterval(() => {
     if (resetInSec > 0) resetInSec -= 1;
     document.getElementById('reset-in').textContent = fmtHMS(Math.max(0, resetInSec));
-    if (limitUsed >= limitMax) {
-      document.getElementById('limit-time').textContent = fmtHMS(Math.max(0, resetInSec)) + ' left';
-    }
+    if (limitUsed >= limitMax) document.getElementById('limit-time').textContent = fmtHMS(Math.max(0, resetInSec)) + ' left';
   }, 1000);
 
-  loadState();
-  loadRegions();
-  loadAccounts();
+  loadState(); loadRegions(); loadAccounts();
   </script>
   `);
 }
@@ -587,7 +611,8 @@ function docsPage() {
   return pageShell("Docs", `
   <h1>Docs</h1>
   <p class="sub">How GHGen works.</p>
-  <div class="card"><h2>Register</h2><p class="muted">Enter your email, receive a code, then provide your key + Roblox username + GHGen username.</p></div>
+  <div class="card"><h2>Register</h2><p class="muted">Pick a username, email, password and your Roblox username. We'll send a code to your email.</p></div>
+  <div class="card"><h2>Login</h2><p class="muted">Enter username + password. We'll send a fresh code to your registered email every time.</p></div>
   <div class="card"><h2>Claim</h2><p class="muted">Pick a region (or Random) and click Claim. Server checks your daily limit and cooldown.</p></div>
   <div class="card"><h2>Limits</h2><p class="muted">Day: 3/20s · Week: 10/30s · Month: 30/60s · Year: 40/70s. 24h window starts on first claim.</p></div>
   `);
@@ -597,117 +622,162 @@ function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function maskEmail(e) {
+  if (!e) return "your email";
+  const [name, domain] = e.split("@");
+  if (!name || !domain) return e;
+  const shown = name.length <= 3 ? name[0] + "***" : name.slice(0, 2) + "***" + name.slice(-1);
+  return `${shown}@${domain}`;
+}
+
 // ============================================================
 //  AUTH HANDLERS
 // ============================================================
-async function handleSendCode(request, env) {
+async function handleLoginStart(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
-  const email = String(body.email || "").trim().toLowerCase();
-  if (!validEmail(email)) return json({ ok: false, error: "invalid_email" }, 400);
+  const username = String(body.username || "").trim();
+  const password = String(body.password || "");
+  if (!validUsername(username) || !password) return json({ ok: false, error: "invalid_input" }, 400);
 
-  const existing = await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(email).first();
-  const purpose = existing ? "login" : "register";
+  const user = await env.DB.prepare(
+    `SELECT id, email, password_hash, salt FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
+  ).bind(username).first();
+  if (!user) return json({ ok: false, error: "invalid_credentials" }, 401);
+  if (!user.password_hash || !user.salt) return json({ ok: false, error: "no_password_set" }, 401);
+  if (!user.email) return json({ ok: false, error: "no_email_on_account" }, 401);
+
+  const ok = await verifyPassword(password, user.password_hash, user.salt);
+  if (!ok) return json({ ok: false, error: "invalid_credentials" }, 401);
 
   const code = randomCode6();
   const ts = now();
+  await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(user.email).run();
+  const ins = await env.DB.prepare(
+    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'login', ?, ?) RETURNING id`
+  ).bind(user.email, code, ts, ts + CODE_TTL).first();
 
-  // Удаляем старые неиспользованные коды для этого email
-  await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(email).run();
+  const sent = await sendEmail(env, user.email, code);
+  if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
 
-  await env.DB.prepare(
-    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`
-  ).bind(email, code, purpose, ts, ts + CODE_TTL).run();
-
-  const sent = await sendEmail(env, email, code);
-  if (!sent.ok) {
-    return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
-  }
-  return json({ ok: true, purpose });
+  return json({ ok: true, email_masked: maskEmail(user.email) }, 200, {
+    "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
+  });
 }
 
-async function handleVerifyCode(request, env) {
+async function handleRegisterStart(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  const username = String(body.username || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
-  const code = String(body.code || "").trim();
-  if (!validEmail(email) || !/^\d{6}$/.test(code)) return json({ ok: false, error: "invalid_input" }, 400);
-
-  const row = await env.DB.prepare(
-    `SELECT * FROM ghgen_verifications WHERE email = ? AND code = ? AND used = 0 ORDER BY id DESC LIMIT 1`
-  ).bind(email, code).first();
-  if (!row) return json({ ok: false, error: "invalid_code" }, 400);
-  if (Number(row.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
-
-  if (row.purpose === "login") {
-    const user = await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(email).first();
-    if (!user) return json({ ok: false, error: "user_not_found" }, 400);
-    await env.DB.prepare(`UPDATE ghgen_verifications SET used = 1 WHERE id = ?`).bind(row.id).run();
-    const sid = await createSession(env, user.id, getIP(request));
-    await env.DB.prepare(`UPDATE ghgen_users SET last_login = ? WHERE id = ?`).bind(now(), user.id).run();
-    return json({ ok: true, mode: "login" }, 200, { "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL) });
-  }
-
-  // register mode — ждём заполнения полей в /api/auth/register
-  await env.DB.prepare(`UPDATE ghgen_verifications SET used = 1 WHERE id = ?`).bind(row.id).run();
-  return json({ ok: true, mode: "register" });
-}
-
-async function handleRegister(request, env) {
-  let body;
-  try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
-
-  const email = String(body.email || "").trim().toLowerCase();
-  const key = String(body.key || "").trim();
+  const password = String(body.password || "");
   const roblox_username = String(body.roblox_username || "").trim();
-  const ghgen_username = String(body.ghgen_username || "").trim();
+  const key = String(body.key || "").trim();
 
+  if (!validUsername(username)) return json({ ok: false, error: "invalid_username" }, 400);
   if (!validEmail(email)) return json({ ok: false, error: "invalid_email" }, 400);
-  if (!/^GH-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(key) && !key.startsWith("GH-PAID-")) {
+  if (password.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
+  if (!validRobloxUsername(roblox_username)) return json({ ok: false, error: "invalid_roblox_username" }, 400);
+
+  // key optional — если задан, проверим формат
+  if (key && !/^GH-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(key) && !key.startsWith("GH-PAID-")) {
     return json({ ok: false, error: "invalid_key_format" }, 400);
   }
-  if (!validRobloxUsername(roblox_username)) return json({ ok: false, error: "invalid_roblox_username" }, 400);
-  if (!validUsername(ghgen_username)) return json({ ok: false, error: "invalid_ghgen_username" }, 400);
 
-  const ks = await loadKeyStatus(env, key);
-  if (!ks.valid) return json({ ok: false, error: ks.reason }, 403);
-
-  // Проверка bind к Roblox username
-  const keyUser = String(ks.key_username || "");
-  if (!keyUser.startsWith("pending_") && keyUser.toLowerCase() !== roblox_username.toLowerCase()) {
-    return json({ ok: false, error: "roblox_username_mismatch", bound: keyUser }, 403);
+  // Проверки уникальности (кроме ghost-аккаунтов email_verified=0)
+  const existing_username = await env.DB.prepare(
+    `SELECT id, email_verified FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
+  ).bind(username).first();
+  if (existing_username && existing_username.email_verified === 1) {
+    return json({ ok: false, error: "username_taken" }, 409);
   }
 
-  // Уникальность
-  if (await env.DB.prepare(`SELECT id FROM ghgen_users WHERE key = ? LIMIT 1`).bind(key).first()) {
-    return json({ ok: false, error: "key_already_registered" }, 409);
-  }
-  if (await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(email).first()) {
+  const existing_email = await env.DB.prepare(
+    `SELECT id, email_verified FROM ghgen_users WHERE email = ? LIMIT 1`
+  ).bind(email).first();
+  if (existing_email && existing_email.email_verified === 1) {
     return json({ ok: false, error: "email_already_registered" }, 409);
   }
-  if (await env.DB.prepare(`SELECT id FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`).bind(ghgen_username).first()) {
-    return json({ ok: false, error: "ghgen_username_taken" }, 409);
-  }
-  if (await env.DB.prepare(`SELECT id FROM ghgen_users WHERE roblox_username = ? LIMIT 1`).bind(roblox_username).first()) {
+
+  const existing_roblox = await env.DB.prepare(
+    `SELECT id, email_verified FROM ghgen_users WHERE roblox_username = ? LIMIT 1`
+  ).bind(roblox_username).first();
+  if (existing_roblox && existing_roblox.email_verified === 1) {
     return json({ ok: false, error: "roblox_username_taken" }, 409);
   }
 
-  const ts = now();
-  await env.DB.prepare(
-    `INSERT INTO ghgen_users (key, roblox_username, ghgen_username, email, created_at) VALUES (?, ?, ?, ?, ?)`
-  ).bind(key, roblox_username, ghgen_username, email, ts).run();
-
-  // Если key был pending_* — привязываем реальный Roblox username
-  if (keyUser.startsWith("pending_")) {
-    try { await env.DB.prepare(`UPDATE keys SET username = ? WHERE key = ?`).bind(roblox_username, key).run(); } catch(e) {}
+  // Проверка key (если задан)
+  let keyUser = null;
+  if (key) {
+    const ks = await loadKeyStatus(env, key);
+    if (!ks.valid) return json({ ok: false, error: "key_" + ks.reason }, 403);
+    keyUser = String(ks.key_username || "");
+    if (!keyUser.startsWith("pending_") && keyUser.toLowerCase() !== roblox_username.toLowerCase()) {
+      return json({ ok: false, error: "roblox_username_mismatch", bound: keyUser }, 403);
+    }
   }
 
-  const userRow = await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(email).first();
-  const sid = await createSession(env, userRow.id, getIP(request));
-  await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
-    .bind(userRow.id, "register", getIP(request), ts).run();
+  const { hash, salt } = await hashPassword(password);
+  const ts = now();
 
-  return json({ ok: true }, 200, { "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL) });
+  // Если такой username/email уже есть, но не верифицирован — перезаписываем
+  if (existing_username) {
+    await env.DB.prepare(
+      `UPDATE ghgen_users SET email = ?, password_hash = ?, salt = ?, roblox_username = ?, key = ?, created_at = ? WHERE id = ?`
+    ).bind(email, hash, salt, roblox_username, key || null, ts, existing_username.id).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO ghgen_users (key, roblox_username, ghgen_username, email, password_hash, salt, created_at, email_verified)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
+    ).bind(key || null, roblox_username, username, email, hash, salt, ts).run();
+  }
+
+  const code = randomCode6();
+  await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(email).run();
+  const ins = await env.DB.prepare(
+    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'register', ?, ?) RETURNING id`
+  ).bind(email, code, ts, ts + CODE_TTL).first();
+
+  const sent = await sendEmail(env, email, code);
+  if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
+
+  return json({ ok: true, email_masked: maskEmail(email) }, 200, {
+    "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
+  });
+}
+
+async function handleVerify(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  const code = String(body.code || "").trim();
+  if (!/^\d{6}$/.test(code)) return json({ ok: false, error: "invalid_code" }, 400);
+
+  const pendingId = getCookie(request, "GHGEN_PENDING");
+  if (!pendingId) return json({ ok: false, error: "no_pending_verification" }, 400);
+
+  const v = await env.DB.prepare(
+    `SELECT * FROM ghgen_verifications WHERE id = ? AND used = 0 LIMIT 1`
+  ).bind(pendingId).first();
+  if (!v) return json({ ok: false, error: "no_pending_verification" }, 400);
+  if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
+  if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
+
+  const user = await env.DB.prepare(
+    `SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`
+  ).bind(v.email).first();
+  if (!user) return json({ ok: false, error: "user_not_found" }, 400);
+
+  await env.DB.prepare(`UPDATE ghgen_verifications SET used = 1 WHERE id = ?`).bind(v.id).run();
+  await env.DB.prepare(`UPDATE ghgen_users SET email_verified = 1, last_login = ? WHERE id = ?`).bind(now(), user.id).run();
+
+  const sid = await createSession(env, user.id, getIP(request));
+  await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
+    .bind(user.id, v.purpose === "register" ? "register" : "login", getIP(request), now()).run();
+
+  return json({ ok: true }, 200, {
+    "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
+    "Set-Cookie-2": clearCookieHeader("GHGEN_PENDING")
+  });
 }
 
 async function handleLogout(env, request) {
@@ -732,23 +802,16 @@ async function handleState(env, request) {
   if (!bucket || t - Number(bucket.day_bucket) >= DAY_WINDOW) {
     dayBucket = t; count = 0; lastClaimAt = bucket ? Number(bucket.last_claim_at || 0) : 0;
   } else {
-    dayBucket = Number(bucket.day_bucket);
-    count = Number(bucket.count);
-    lastClaimAt = Number(bucket.last_claim_at || 0);
+    dayBucket = Number(bucket.day_bucket); count = Number(bucket.count); lastClaimAt = Number(bucket.last_claim_at || 0);
   }
-
   const resetIn = Math.max(0, dayBucket + DAY_WINDOW - t);
   const nextClaimIn = lastClaimAt ? Math.max(0, plan.cooldown - (t - lastClaimAt)) : 0;
 
   return json({
     ok: true,
-    limit: plan.limit,
-    cooldown_seconds: plan.cooldown,
-    used: count,
-    reset_in: resetIn,
-    next_claim_in: nextClaimIn,
-    key_valid: ks.valid,
-    plan: ks.plan || "day",
+    limit: plan.limit, cooldown_seconds: plan.cooldown, used: count,
+    reset_in: resetIn, next_claim_in: nextClaimIn,
+    key_valid: ks.valid, plan: ks.plan || "day"
   });
 }
 
@@ -773,10 +836,7 @@ async function handleAccounts(env, request) {
 
   const accounts = [];
   for (const row of rows.results || []) {
-    try {
-      const dec = await decryptPayload(env, row.payload);
-      accounts.push({ ...dec, issued_at: row.issued_at });
-    } catch (e) {}
+    try { const dec = await decryptPayload(env, row.payload); accounts.push({ ...dec, issued_at: row.issued_at }); } catch (e) {}
   }
   return json({ ok: true, accounts });
 }
@@ -795,25 +855,17 @@ async function handleClaim(env, request) {
   const plan = PLAN_LIMITS[ks.plan] || PLAN_LIMITS.day;
   const t = now();
 
-  // Bucket state
   const bucket = await env.DB.prepare(`SELECT * FROM ghgen_buckets WHERE key = ? LIMIT 1`).bind(user.key).first();
   let dayBucket, count, lastClaimAt;
   if (!bucket || t - Number(bucket.day_bucket) >= DAY_WINDOW) {
     dayBucket = t; count = 0; lastClaimAt = bucket ? Number(bucket.last_claim_at || 0) : 0;
   } else {
-    dayBucket = Number(bucket.day_bucket);
-    count = Number(bucket.count);
-    lastClaimAt = Number(bucket.last_claim_at || 0);
+    dayBucket = Number(bucket.day_bucket); count = Number(bucket.count); lastClaimAt = Number(bucket.last_claim_at || 0);
   }
 
-  if (count >= plan.limit) {
-    return json({ ok: false, error: "daily_limit", reset_in: dayBucket + DAY_WINDOW - t }, 429);
-  }
-  if (lastClaimAt && t - lastClaimAt < plan.cooldown) {
-    return json({ ok: false, error: "cooldown", wait_seconds: plan.cooldown - (t - lastClaimAt) }, 429);
-  }
+  if (count >= plan.limit) return json({ ok: false, error: "daily_limit", reset_in: dayBucket + DAY_WINDOW - t }, 429);
+  if (lastClaimAt && t - lastClaimAt < plan.cooldown) return json({ ok: false, error: "cooldown", wait_seconds: plan.cooldown - (t - lastClaimAt) }, 429);
 
-  // Выдаём аккаунт
   let res;
   if (region) {
     res = await env.DB.prepare(
@@ -828,50 +880,38 @@ async function handleClaim(env, request) {
       ) RETURNING id, payload`
     ).bind(user.id, t).first();
   }
-
   if (!res) return json({ ok: false, error: "pool_empty" }, 404);
 
-  // Обновляем bucket
   await env.DB.prepare(
     `INSERT INTO ghgen_buckets (key, day_bucket, count, last_claim_at) VALUES (?, ?, 1, ?)
      ON CONFLICT(key) DO UPDATE SET day_bucket = excluded.day_bucket, count = excluded.count, last_claim_at = excluded.last_claim_at`
   ).bind(user.key, dayBucket, t).run();
 
-  // Лог claim
   await env.DB.prepare(
     `INSERT INTO ghgen_claims (key, user_id, pool_id, region, claimed_at) VALUES (?, ?, ?, ?, ?)`
   ).bind(user.key, user.id, res.id, region, t).run();
 
   try {
     const dec = await decryptPayload(env, res.payload);
-    return json({
-      ok: true,
-      account: { ...dec, issued_at: t },
-      used: count + 1,
-      limit: plan.limit,
-    });
+    return json({ ok: true, account: { ...dec, issued_at: t }, used: count + 1, limit: plan.limit });
   } catch (e) {
     return json({ ok: false, error: "decrypt_failed", message: String(e.message || e) }, 500);
   }
 }
 
 // ============================================================
-//  POOL ADMIN
+//  POOL ADMIN (unchanged)
 // ============================================================
 async function handlePoolUpload(request, env) {
   const secret = request.headers.get("X-Upload-Secret");
-  if (!env.UPLOAD_SECRET || secret !== env.UPLOAD_SECRET) {
-    return json({ ok: false, error: "unauthorized" }, 401);
-  }
+  if (!env.UPLOAD_SECRET || secret !== env.UPLOAD_SECRET) return json({ ok: false, error: "unauthorized" }, 401);
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
   const accounts = Array.isArray(body.accounts) ? body.accounts : [];
   if (!accounts.length) return json({ ok: false, error: "no_accounts" }, 400);
   if (accounts.length > 500) return json({ ok: false, error: "too_many" }, 413);
 
-  try { await getPoolKey(env); } catch (e) {
-    return json({ ok: false, error: "pool_key_invalid", message: String(e.message || e) }, 500);
-  }
+  try { await getPoolKey(env); } catch (e) { return json({ ok: false, error: "pool_key_invalid", message: String(e.message || e) }, 500); }
 
   let added = 0, skipped = 0;
   const errors = [];
@@ -884,6 +924,8 @@ async function handlePoolUpload(request, env) {
       ci: a.ci ? String(a.ci).trim() : null,
       ip: a.ip ? String(a.ip).trim() : null,
       ck: a.ck ? String(a.ck) : null,
+      age: a.age != null ? Number(a.age) : null,       // NEW: возраст в днях
+      created: a.created ? String(a.created).trim() : null, // NEW: ISO дата
     };
     const region = clean.c || null;
     try {
@@ -903,34 +945,11 @@ async function handlePoolUpload(request, env) {
 async function handlePoolStats(request, env) {
   const secret = request.headers.get("X-Upload-Secret");
   const expected = env.UPLOAD_SECRET;
+  if (!expected || secret !== expected) return json({ ok: false, error: "unauthorized" }, 401);
 
-  // ДИАГНОСТИКА: что воркер видит в env
-  const envDebug = {
-    has_upload_secret: !!env.UPLOAD_SECRET,
-    has_pool_key: !!env.POOL_KEY,
-    has_resend_key: !!env.RESEND_API_KEY,
-    upload_secret_length: env.UPLOAD_SECRET ? env.UPLOAD_SECRET.length : 0,
-    got_secret_length: secret ? secret.length : 0,
-    match: secret === expected,
-    env_keys: Object.keys(env).filter(k => !k.startsWith("__")),
-  };
-
-  if (!expected || secret !== expected) {
-    return json({ ok: false, error: "unauthorized", debug: envDebug }, 401);
-  }
-
-  let poolKeyOk = true, poolKeyError = null;
-  try { await getPoolKey(env); } catch (e) { poolKeyOk = false; poolKeyError = String(e.message || e); }
   const avail = await env.DB.prepare(`SELECT COUNT(*) as c FROM ghgen_pool WHERE status='available'`).first();
   const issued = await env.DB.prepare(`SELECT COUNT(*) as c FROM ghgen_pool WHERE status='issued'`).first();
-  return json({
-    ok: true,
-    available: avail.c, issued: issued.c, total: avail.c + issued.c,
-    pool_key_ok: poolKeyOk, pool_key_error: poolKeyError,
-    using_env_secret: !!env.UPLOAD_SECRET,
-    using_env_pool_key: !!env.POOL_KEY,
-    using_resend_key: !!env.RESEND_API_KEY,
-  });
+  return json({ ok: true, available: avail.c, issued: issued.c, total: avail.c + issued.c });
 }
 
 // ============================================================
@@ -946,9 +965,9 @@ export default {
       if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
 
       // auth
-      if (request.method === "POST" && path === "/api/auth/send-code") return await handleSendCode(request, env);
-      if (request.method === "POST" && path === "/api/auth/verify") return await handleVerifyCode(request, env);
-      if (request.method === "POST" && path === "/api/auth/register") return await handleRegister(request, env);
+      if (request.method === "POST" && path === "/api/auth/login-start") return await handleLoginStart(request, env);
+      if (request.method === "POST" && path === "/api/auth/register-start") return await handleRegisterStart(request, env);
+      if (request.method === "POST" && path === "/api/auth/verify") return await handleVerify(request, env);
       if (request.method === "GET" && path === "/logout") return await handleLogout(env, request);
 
       // user
