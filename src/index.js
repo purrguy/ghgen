@@ -1,6 +1,5 @@
 /**
- * ghgen v3 — username/password + email code auth
- * Env: POOL_KEY, UPLOAD_SECRET, RESEND_API_KEY
+ * ghgen v4 — sidebar + history + bulk + age auto-refresh
  */
 
 const CORS = {
@@ -37,6 +36,12 @@ function json(data, status = 200, extra = {}) {
 }
 function html(body, status = 200, extra = {}) {
   return new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...extra } });
+}
+function js(body) {
+  return new Response(body, { status: 200, headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store", ...CORS } });
+}
+function css(body) {
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=3600", ...CORS } });
 }
 function getIP(request) {
   return request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "";
@@ -232,31 +237,46 @@ async function loadKeyStatus(env, key) {
 }
 
 // ============================================================
-//  PAGE SHELL
+//  AGE REFRESH (обновляет age_days при каждом визите)
 // ============================================================
-function pageShell(title, content) {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${title} · GHGen</title>
-<style>
-:root{--bg:#0c0c0d;--bg2:#131316;--card:#18181b;--line:#27272a;--text:#e8e8ea;--muted:#8a8a93;--accent:#c9a227;--ok:#4caf7a;--bad:#e85d5d;--accent-bg:rgba(201,162,39,.12);--accent-line:rgba(201,162,39,.35)}
+async function refreshAges(env) {
+  const t = now();
+  try {
+    // Увеличиваем age_days на прошедшие дни с момента последнего обновления
+    await env.DB.prepare(
+      `UPDATE ghgen_pool
+         SET age_days = COALESCE(age_days, 0) + CAST((? - COALESCE(age_base_at, created_at)) / 86400 AS INTEGER),
+             age_base_at = ?
+       WHERE status='available'
+         AND (? - COALESCE(age_base_at, created_at)) >= 86400`
+    ).bind(t, t, t).run();
+  } catch (e) {
+    console.error("refreshAges:", e);
+  }
+}
+
+// ============================================================
+//  STATIC ASSETS
+// ============================================================
+const STYLE_CSS = `:root{--bg:#0c0c0d;--bg2:#131316;--card:#18181b;--line:#27272a;--text:#e8e8ea;--muted:#8a8a93;--accent:#c9a227;--ok:#4caf7a;--bad:#e85d5d;--accent-bg:rgba(201,162,39,.12);--accent-line:rgba(201,162,39,.35)}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Inter,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-.wrap{width:min(1000px,94vw);margin:0 auto;padding:28px 0 80px}
-.top{border-bottom:1px solid var(--line);background:rgba(12,12,13,.85);backdrop-filter:blur(12px);position:sticky;top:0;z-index:10}
-.top-inner{width:min(1000px,94vw);margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:14px 0}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--text)}
-.brand-mark{width:32px;height:32px;border-radius:8px;background:#1a1a1d;border:1px solid var(--accent);display:grid;place-items:center;color:var(--accent);font-size:12px;font-weight:800}
-.nav{display:flex;gap:6px;align-items:center}
-.nav a{color:var(--muted);padding:7px 12px;border-radius:8px;font-size:13px;font-weight:500}
-.nav a:hover{color:var(--text);background:var(--bg2);text-decoration:none}
-h1{font-size:1.6rem;font-weight:700;margin-bottom:6px}
-h2{font-size:1.05rem;font-weight:600;margin-bottom:12px}
-.sub{color:var(--muted);font-size:14px;margin-bottom:22px}
+.layout{display:grid;grid-template-columns:200px 1fr;min-height:100vh}
+.sidebar{background:var(--card);border-right:1px solid var(--line);padding:20px 12px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.sidebar .logo{display:flex;align-items:center;gap:10px;padding:0 8px 18px;font-weight:700;margin-bottom:8px;border-bottom:1px solid var(--line)}
+.brand-mark{width:30px;height:30px;border-radius:8px;background:#1a1a1d;border:1px solid var(--accent);display:grid;place-items:center;color:var(--accent);font-size:12px;font-weight:800}
+.side-nav{display:flex;flex-direction:column;gap:2px}
+.side-nav button{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:500;cursor:pointer;text-align:left;font-family:inherit;transition:all .15s;width:100%}
+.side-nav button:hover{background:var(--bg2);color:var(--text)}
+.side-nav button.active{background:var(--accent-bg);color:var(--accent);font-weight:600}
+.side-user{margin-top:auto;padding:14px 8px 0;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.side-user b{color:var(--text);display:block;margin-bottom:4px;font-size:13px}
+.main{padding:28px 32px;overflow-x:hidden}
+@media(max-width:760px){.layout{grid-template-columns:1fr}.sidebar{position:relative;height:auto}}
+h1{font-size:1.5rem;font-weight:700;margin-bottom:6px}
+h2{font-size:1.02rem;font-weight:600;margin-bottom:12px}
+.sub{color:var(--muted);font-size:13.5px;margin-bottom:20px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin:12px 0}
 label{display:block;color:var(--muted);font-size:12px;font-weight:600;margin:10px 0 6px}
 input,select,textarea{width:100%;background:#0e0e11;border:1px solid var(--line);color:var(--text);padding:11px 12px;border-radius:8px;font-size:14px;font-family:inherit}
@@ -267,8 +287,8 @@ button.primary{background:var(--accent);color:#0a0a0a;border-color:var(--accent)
 button.primary:hover{color:#0a0a0a;filter:brightness(1.08)}
 button:disabled{opacity:.45;cursor:not-allowed}
 button:disabled:hover{color:var(--text);border-color:var(--line)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media(max-width:760px){.grid{grid-template-columns:1fr}}
+.grid{display:grid;grid-template-columns:1.2fr 1fr;gap:14px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
 .muted{color:var(--muted);font-size:13px}
 .ok{color:var(--ok)}.err{color:var(--bad)}
 .mono{font-family:ui-monospace,monospace;font-size:12px}
@@ -285,12 +305,9 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .limit-banner{display:none;background:rgba(232,93,93,.1);border:1px solid rgba(232,93,93,.35);color:#f8b0b0;padding:14px 18px;border-radius:10px;margin:12px 0;font-weight:600;text-align:center;font-size:14px}
 .limit-banner.show{display:block}
 .limit-banner .time{color:#fff;font-family:ui-monospace,monospace;font-size:16px;margin-left:8px}
-.counter{font-size:28px;font-weight:700;color:var(--accent);font-family:ui-monospace,monospace}
-.counter span{color:var(--muted);font-size:15px;font-weight:500}
 .auth-tabs{display:flex;gap:4px;margin-bottom:20px;background:var(--bg2);padding:4px;border-radius:10px;border:1px solid var(--line)}
 .auth-tabs button{flex:1;background:transparent;border:none;padding:10px;font-size:13px;font-weight:600;color:var(--muted);border-radius:7px;cursor:pointer}
 .auth-tabs button.active{background:var(--card);color:var(--text)}
-.auth-tabs button:hover{color:var(--text)}
 .link-btn{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:0;text-decoration:underline}
 .link-btn:hover{color:var(--accent)}
 .acc-row{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0}
@@ -315,20 +332,41 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .acc-preview .v.reveal{cursor:pointer;border-bottom:1px dashed var(--line);padding:0 4px}
 .acc-preview .v.reveal:hover{color:var(--accent);border-color:var(--accent)}
 .acc-preview .v.reveal.copied{color:var(--ok);border-color:var(--ok)}
-</style>
+.pane{display:none}.pane.active{display:block}
+`;
+
+// ============================================================
+//  PAGE SHELL
+// ============================================================
+function pageShell(title, content, activeTab) {
+  activeTab = activeTab || "";
+  let nav = '';
+  nav += `<button data-tab="free"${activeTab === 'free' ? ' class="active"' : ''}><span>🏠</span> Main</button>`;
+  nav += `<button data-tab="history"${activeTab === 'history' ? ' class="active"' : ''}><span>📜</span> History</button>`;
+  nav += `<button data-tab="bulk"${activeTab === 'bulk' ? ' class="active"' : ''}><span>📦</span> Bulk</button>`;
+  nav += `<button data-tab="premium"${activeTab === 'premium' ? ' class="active"' : ''}><span>⭐</span> Premium</button>`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>${title} · GHGen</title>
+<link rel="stylesheet" href="/static/style.css"/>
 </head>
 <body>
-<header class="top">
-  <div class="top-inner">
-    <a class="brand" href="/"><div class="brand-mark">GH</div><span>GHGen</span></a>
-    <nav class="nav">
-      <a href="/dashboard">Dashboard</a>
-      <a href="/docs">Docs</a>
-      <a href="${MAIN_SITE}">Main site ↗</a>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="logo"><div class="brand-mark">GH</div><span>GHGen</span></div>
+    <nav class="side-nav" id="side-nav">
+      ${nav}
     </nav>
-  </div>
-</header>
-<main class="wrap">${content}</main>
+    <div class="side-user" id="side-user">Loading…</div>
+  </aside>
+  <main class="main">
+    ${content}
+  </main>
+</div>
 </body>
 </html>`;
 }
@@ -336,18 +374,16 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 // ============================================================
 //  AUTH PAGE
 // ============================================================
-function authPage(msg = "") {
+function authPage() {
   return pageShell("Auth", `
   <div style="max-width:440px;margin:40px auto">
     <h1>Welcome to GHGen</h1>
     <p class="sub">Sign in or create a new account.</p>
-
     <div class="card">
       <div class="auth-tabs">
         <button id="tab-login" class="active">Login</button>
         <button id="tab-register">Register</button>
       </div>
-
       <div id="pane-login">
         <label>Username</label>
         <input id="login-user" autocomplete="username" placeholder="your_ghgen_username"/>
@@ -359,7 +395,6 @@ function authPage(msg = "") {
         </div>
         <p class="note" id="login-out"></p>
       </div>
-
       <div id="pane-register" style="display:none">
         <label>Username</label>
         <input id="reg-user" placeholder="3-32 chars, A-Za-z0-9_" autocomplete="username"/>
@@ -369,16 +404,13 @@ function authPage(msg = "") {
         <input id="reg-pass" type="password" placeholder="min 8 chars" autocomplete="new-password"/>
         <label>Roblox username</label>
         <input id="reg-rbx" placeholder="Not display name" autocomplete="off"/>
-        <label>Key <span class="muted" style="font-weight:400">(optional for now)</span></label>
+        <label>Key <span class="muted" style="font-weight:400">(optional)</span></label>
         <input id="reg-key" placeholder="GH-XXXX-XXXX-XXXX" autocomplete="off"/>
         <button class="primary" id="btn-register" style="width:100%;margin-top:18px">Continue</button>
         <p class="note" id="register-out"></p>
       </div>
-
       <div id="pane-forgot" style="display:none">
-        <p class="muted" style="margin-bottom:14px;font-size:13px">
-          Enter your username and we'll send a reset code to the email on file.
-        </p>
+        <p class="muted" style="margin-bottom:14px;font-size:13px">Enter your username and we'll send a reset code.</p>
         <label>Username</label>
         <input id="forgot-user" placeholder="your_ghgen_username" autocomplete="username"/>
         <button class="primary" id="btn-forgot" style="width:100%;margin-top:18px">Send reset code</button>
@@ -387,15 +419,12 @@ function authPage(msg = "") {
         </div>
         <p class="note" id="forgot-out"></p>
       </div>
-
       <div id="pane-verify" style="display:none">
-        <p class="muted" style="margin-bottom:10px">Code sent to <b id="verify-email">your email</b>. Expires in 10 min.</p>
+        <p class="muted" style="margin-bottom:10px">Code sent to <b id="verify-email">your email</b>.</p>
         <label>Verification code</label>
         <input id="verify-code" maxlength="6" inputmode="numeric" placeholder="123456" autocomplete="one-time-code"/>
         <div id="extra-pass-wrap" style="display:none">
-          <p class="muted" style="margin:14px 0 6px;font-size:12px">
-            ⚠ <span id="extra-pass-hint">Set a new password</span>
-          </p>
+          <p class="muted" style="margin:14px 0 6px;font-size:12px">⚠ <span id="extra-pass-hint">Set a new password</span></p>
           <label>New password</label>
           <input id="extra-pass" type="password" placeholder="min 8 chars" autocomplete="new-password"/>
         </div>
@@ -407,8 +436,117 @@ function authPage(msg = "") {
       </div>
     </div>
   </div>
+  <script src="/static/auth.js"></script>
+  `);
+}
 
-  <script>
+// ============================================================
+//  DASHBOARD PAGE
+// ============================================================
+function dashboardPage(user, keyStatus) {
+  return pageShell("Dashboard", `
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">
+    <div>
+      <h1 style="margin-bottom:2px">Dashboard</h1>
+      <p class="sub" style="margin-bottom:0">Signed in as <b>${escapeHtml(user.ghgen_username)}</b></p>
+    </div>
+  </div>
+
+  <div id="limit-banner" class="limit-banner">
+    You reached your daily limit!<span class="time" id="limit-time">00:00:00 left</span>
+  </div>
+
+  <div class="pane active" id="pane-free">
+    <div class="grid">
+      <div>
+        <div class="cat-section">
+          <div class="cat-header">Accounts by Location</div>
+          <div id="region-cats"><p class="muted" style="padding:8px 4px">Loading…</p></div>
+        </div>
+        <div class="cat-section">
+          <div class="cat-header">Accounts by Age</div>
+          <div id="age-cats"><p class="muted" style="padding:8px 4px">Loading…</p></div>
+        </div>
+      </div>
+      <div>
+        <div class="card" style="position:sticky;top:20px">
+          <h2 id="preview-title">No account yet</h2>
+          <div id="preview-body">
+            <p class="muted" style="font-size:13px">Pick a category on the left and click <b>Claim</b>.</p>
+          </div>
+          <button class="primary" id="btn-claim" style="margin-top:16px;width:100%;padding:14px;font-size:14px;font-weight:700" disabled>Pick a category</button>
+          <p class="note" id="claim-out" style="min-height:16px"></p>
+        </div>
+        <div class="card">
+          <h2>Your limit</h2>
+          <div class="acc-row"><span class="label">Used today</span><span class="val" id="counter">—</span></div>
+          <div class="acc-row"><span class="label">Plan</span><span class="val" id="plan-val">${keyStatus.plan || '—'}</span></div>
+          <div class="acc-row"><span class="label">Cooldown</span><span class="val" id="cooldown-sec">—</span></div>
+          <div class="acc-row"><span class="label">Reset in</span><span class="val" id="reset-in">—</span></div>
+          <div style="margin-top:12px">
+            ${keyStatus.valid ? '<span class="badge ok">ACTIVE</span>' : '<span class="badge err">' + (keyStatus.reason || 'INVALID') + '</span>'}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-history">
+    <h1>History</h1>
+    <p class="sub">All accounts you've claimed.</p>
+    <div class="card">
+      <div id="accounts-list"><p class="muted">Loading…</p></div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-bulk">
+    <h1>Bulk</h1>
+    <p class="sub">Bulk claim — coming soon.</p>
+    <div class="card">
+      <p class="muted">Bulk features are being developed. Check back later.</p>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-premium">
+    <h1>Premium</h1>
+    <p class="sub">Premium pool — coming soon.</p>
+    <div class="card">
+      <p class="muted">Higher limits, older accounts, better regions.</p>
+    </div>
+  </div>
+
+  <script src="/static/dashboard.js"></script>
+  `);
+}
+
+function docsPage() {
+  return pageShell("Docs", `
+  <h1>Docs</h1>
+  <p class="sub">How GHGen works.</p>
+  <div class="card"><h2>Register</h2><p class="muted">Pick a username, email, password and Roblox username. We'll send a code.</p></div>
+  <div class="card"><h2>Login</h2><p class="muted">Enter username + password. We'll send a fresh code to your email.</p></div>
+  <div class="card"><h2>Claim</h2><p class="muted">Pick a Category, then click Claim. Server checks daily limit and cooldown.</p></div>
+  <div class="card"><h2>Filters</h2><p class="muted">Location — country. Age — how many days since the Roblox account was created.</p></div>
+  `);
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function maskEmail(e) {
+  if (!e) return "your email";
+  const [name, domain] = e.split("@");
+  if (!name || !domain) return e;
+  const shown = name.length <= 3 ? name[0] + "***" : name.slice(0, 2) + "***" + name.slice(-1);
+  return `${shown}@${domain}`;
+}
+
+// ============================================================
+//  STATIC JS: auth.js
+// ============================================================
+const AUTH_JS = `
+(function(){
   var mode = 'login';
   var verifyMode = 'login';
   var lastUsername = '';
@@ -422,7 +560,6 @@ function authPage(msg = "") {
     document.getElementById('pane-forgot').style.display = 'none';
     document.querySelector('.auth-tabs').style.display = 'flex';
   }
-
   function showForgot() {
     document.querySelector('.auth-tabs').style.display = 'none';
     document.getElementById('pane-login').style.display = 'none';
@@ -430,13 +567,11 @@ function authPage(msg = "") {
     document.getElementById('pane-forgot').style.display = 'block';
     document.getElementById('forgot-user').focus();
   }
-
   function backFromVerify() {
     document.getElementById('pane-verify').style.display = 'none';
     document.querySelector('.auth-tabs').style.display = 'flex';
     setMode(mode === 'forgot' ? 'login' : mode);
   }
-
   function showVerify(email, vm) {
     verifyMode = vm || 'login';
     document.getElementById('pane-verify').style.display = 'block';
@@ -446,7 +581,6 @@ function authPage(msg = "") {
     document.getElementById('verify-email').textContent = email;
     document.getElementById('verify-code').focus();
     document.getElementById('verify-out').textContent = '';
-
     var needsPass = (vm === 'forgot' || vm === 'legacy');
     var wrap = document.getElementById('extra-pass-wrap');
     wrap.style.display = needsPass ? 'block' : 'none';
@@ -526,22 +660,19 @@ function authPage(msg = "") {
     out.className = 'note'; out.textContent = 'Verifying…';
     var code = document.getElementById('verify-code').value.trim();
     if (!/^\\d{6}$/.test(code)) { out.className = 'note err'; out.textContent = 'Enter 6-digit code'; return; }
-
     var endpoint = '/api/auth/verify';
     var payload = { code: code };
-
     if (verifyMode === 'forgot') {
-      var password = document.getElementById('extra-pass').value;
-      if (password.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
+      var p1 = document.getElementById('extra-pass').value;
+      if (p1.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
       endpoint = '/api/auth/forgot-reset';
-      payload = { code: code, password: password };
+      payload = { code: code, password: p1 };
     } else if (verifyMode === 'legacy') {
-      var password2 = document.getElementById('extra-pass').value;
-      if (password2.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
+      var p2 = document.getElementById('extra-pass').value;
+      if (p2.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
       endpoint = '/api/auth/legacy-setup';
-      payload = { code: code, password: password2 };
+      payload = { code: code, password: p2 };
     }
-
     var d = await post(endpoint, payload);
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
     window.location.href = '/dashboard';
@@ -556,138 +687,72 @@ function authPage(msg = "") {
   document.getElementById('login-pass').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') document.getElementById('btn-login').click();
   });
-  </script>
-  `);
-}
+})();
+`;
 
 // ============================================================
-//  DASHBOARD (v2 — category browser + preview)
+//  STATIC JS: dashboard.js
 // ============================================================
-function dashboardPage(user, keyStatus) {
-  return pageShell("Dashboard", `
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">
-    <div>
-      <h1 style="margin-bottom:2px">Dashboard</h1>
-      <p class="sub" style="margin-bottom:0">Signed in as <b>${escapeHtml(user.ghgen_username)}</b></p>
-    </div>
-    <a href="/logout" class="muted" style="font-size:13px">Logout</a>
-  </div>
+const DASHBOARD_JS = `
+(function(){
+  var tab = 'free';
+  var resetInSec = 0, cooldownSec = 20, limitMax = 3, limitUsed = 0, cooldownTimer = null;
+  var selectedRegion = null;
+  var selectedAge = null;
 
-  <div id="limit-banner" class="limit-banner">
-    You reached your daily limit!<span class="time" id="limit-time">00:00:00 left</span>
-  </div>
-
-  <div class="auth-tabs" style="max-width:320px;margin-bottom:20px">
-    <button id="tab-free" class="active">Free</button>
-    <button id="tab-premium">Premium</button>
-  </div>
-
-  <div id="pane-free">
-    <div class="grid" style="grid-template-columns:1.2fr 1fr">
-      <div>
-        <div class="cat-section">
-          <div class="cat-header">Accounts by Location</div>
-          <div id="region-cats"><p class="muted" style="padding:8px 4px">Loading…</p></div>
-        </div>
-
-        <div class="cat-section">
-          <div class="cat-header">Accounts by Age</div>
-          <div id="age-cats"><p class="muted" style="padding:8px 4px">Loading…</p></div>
-        </div>
-      </div>
-
-      <div>
-        <div class="card" style="position:sticky;top:80px">
-          <h2 id="preview-title">No account yet</h2>
-          <div id="preview-body">
-            <p class="muted" style="font-size:13px">
-              Pick a category on the left and click <b>Claim</b>.
-            </p>
-          </div>
-          <button class="primary claim-btn" id="btn-claim" style="margin-top:16px;width:100%;padding:14px;font-size:14px;font-weight:700" disabled>Pick a category</button>
-          <p class="note" id="claim-out" style="min-height:16px"></p>
-        </div>
-
-        <div class="card">
-          <h2>Your limit</h2>
-          <div class="acc-row"><span class="label">Used today</span><span class="val"><span id="counter">—</span></span></div>
-          <div class="acc-row"><span class="label">Plan</span><span class="val" id="plan-val">${keyStatus.plan || '—'}</span></div>
-          <div class="acc-row"><span class="label">Cooldown</span><span class="val" id="cooldown-sec">—</span></div>
-          <div class="acc-row"><span class="label">Reset in</span><span class="val" id="reset-in">—</span></div>
-          <div style="margin-top:12px">
-            ${keyStatus.valid ? `<span class="badge ok">ACTIVE</span>` : `<span class="badge err">${keyStatus.reason || 'INVALID'}</span>`}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Your accounts</h2>
-      <div id="accounts-list"><p class="muted">Loading…</p></div>
-    </div>
-  </div>
-
-  <div id="pane-premium" style="display:none">
-    <div class="card" style="text-align:center;padding:60px 20px">
-      <h2 style="margin-bottom:8px">Premium</h2>
-      <p class="muted">Premium pool — coming soon. Contact us to learn more.</p>
-      <p class="muted" style="margin-top:12px;font-size:12px">Higher limits, older accounts, better regions.</p>
-    </div>
-  </div>
-
-  <script>
   function mask(v){ if(!v) return '—'; var s=String(v); if(s.length<=6) return s[0]+'•••'; return s.slice(0,3)+'•••'+s.slice(-2); }
   function fmtHMS(sec){ var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-  var resetInSec = 0, cooldownSec = 20, limitMax = 3, limitUsed = 0, cooldownTimer = null;
-  var selectedRegion = null;
-  var selectedAge = null;
-  var currentAccount = null;
+  function setTab(name) {
+    tab = name;
+    var nav = document.getElementById('side-nav');
+    if (nav) nav.querySelectorAll('button').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.tab === name);
+    });
+    var panes = ['free','history','bulk','premium'];
+    panes.forEach(function(p) {
+      var el = document.getElementById('pane-' + p);
+      if (el) el.classList.toggle('active', p === name);
+    });
+  }
 
-  document.getElementById('tab-free').addEventListener('click', function() {
-    document.getElementById('tab-free').classList.add('active');
-    document.getElementById('tab-premium').classList.remove('active');
-    document.getElementById('pane-free').style.display = 'block';
-    document.getElementById('pane-premium').style.display = 'none';
-  });
-  document.getElementById('tab-premium').addEventListener('click', function() {
-    document.getElementById('tab-premium').classList.add('active');
-    document.getElementById('tab-free').classList.remove('active');
-    document.getElementById('pane-free').style.display = 'none';
-    document.getElementById('pane-premium').style.display = 'block';
+  var nav = document.getElementById('side-nav');
+  if (nav) nav.querySelectorAll('button').forEach(function(b) {
+    b.addEventListener('click', function() { setTab(b.dataset.tab); });
   });
 
   async function loadState() {
-    var r = await fetch('/api/state', { credentials: 'same-origin' });
-    var d = await r.json();
-    if (!d.ok) return;
-    resetInSec = d.reset_in || 0;
-    cooldownSec = d.cooldown_seconds || 20;
-    limitMax = d.limit || 3;
-    limitUsed = d.used || 0;
-    document.getElementById('counter').textContent = limitUsed + ' / ' + limitMax;
-    document.getElementById('cooldown-sec').textContent = cooldownSec + 's';
-    document.getElementById('reset-in').textContent = fmtHMS(resetInSec);
-    document.getElementById('plan-val').textContent = d.plan || '—';
-    updateLimitBanner();
-    if (d.next_claim_in > 0) startCooldown(d.next_claim_in);
-    updateClaimButton();
+    try {
+      var r = await fetch('/api/state', { credentials: 'same-origin' });
+      var d = await r.json();
+      if (!d.ok) return;
+      resetInSec = d.reset_in || 0;
+      cooldownSec = d.cooldown_seconds || 20;
+      limitMax = d.limit || 3;
+      limitUsed = d.used || 0;
+      var cEl = document.getElementById('counter'); if (cEl) cEl.textContent = limitUsed + ' / ' + limitMax;
+      var csEl = document.getElementById('cooldown-sec'); if (csEl) csEl.textContent = cooldownSec + 's';
+      var riEl = document.getElementById('reset-in'); if (riEl) riEl.textContent = fmtHMS(resetInSec);
+      var pv = document.getElementById('plan-val'); if (pv) pv.textContent = d.plan || '—';
+      updateLimitBanner();
+      if (d.next_claim_in > 0) startCooldown(d.next_claim_in);
+      updateClaimButton();
+    } catch(e) {}
   }
 
   function updateLimitBanner() {
-    var banner = document.getElementById('limit-banner');
+    var banner = document.getElementById('limit-banner'); if (!banner) return;
     var timeEl = document.getElementById('limit-time');
     if (limitUsed >= limitMax) {
       banner.classList.add('show');
-      timeEl.textContent = fmtHMS(resetInSec) + ' left';
+      if (timeEl) timeEl.textContent = fmtHMS(resetInSec) + ' left';
     } else banner.classList.remove('show');
     updateClaimButton();
   }
 
   function updateClaimButton() {
-    var btn = document.getElementById('btn-claim');
-    if (!btn) return;
+    var btn = document.getElementById('btn-claim'); if (!btn) return;
     var hasFilter = (selectedRegion !== null || selectedAge !== null);
     var outOfLimit = limitUsed >= limitMax;
     var onCooldown = !!cooldownTimer;
@@ -699,148 +764,141 @@ function dashboardPage(user, keyStatus) {
   }
 
   async function loadRegions() {
-    var r = await fetch('/api/regions', { credentials: 'same-origin' });
-    var d = await r.json();
-    if (!d.ok) return;
-
-    var wrap = document.getElementById('region-cats');
-    if (!d.regions.length) {
-      wrap.innerHTML = '<p class="muted" style="padding:8px 4px">Pool is empty.</p>';
-      return;
-    }
-    var html = '';
-    for (var i = 0; i < d.regions.length; i++) {
-      var x = d.regions[i];
-      var active = selectedRegion === x.region ? ' active' : '';
-      var disabled = x.count === 0 ? ' disabled' : '';
-      var stock = x.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + x.count + ' stock</span>';
-      html += '<button class="cat-item' + active + disabled + '" data-region="' + esc(x.region) + '"' + disabled + '>' +
-        '<span class="cat-name">' + esc(x.region) + ' accounts</span>' + stock + '</button>';
-    }
-    wrap.innerHTML = html;
-
-    wrap.querySelectorAll('.cat-item').forEach(function(el) {
-      el.addEventListener('click', function() {
-        wrap.querySelectorAll('.cat-item').forEach(function(c) { c.classList.remove('active'); });
-        el.classList.add('active');
-        selectedRegion = el.dataset.region;
-        selectedAge = null;
-        document.querySelectorAll('#age-cats .cat-item').forEach(function(c) { c.classList.remove('active'); });
-        updateClaimButton();
+    try {
+      var r = await fetch('/api/regions', { credentials: 'same-origin' });
+      var d = await r.json();
+      if (!d.ok) return;
+      var wrap = document.getElementById('region-cats'); if (!wrap) return;
+      if (!d.regions.length) { wrap.innerHTML = '<p class="muted" style="padding:8px 4px">Pool is empty.</p>'; return; }
+      var html = '';
+      for (var i = 0; i < d.regions.length; i++) {
+        var x = d.regions[i];
+        var active = selectedRegion === x.region ? ' active' : '';
+        var disabled = x.count === 0 ? ' disabled' : '';
+        var stock = x.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + x.count + ' stock</span>';
+        html += '<button class="cat-item' + active + disabled + '" data-region="' + esc(x.region) + '"' + disabled + '><span class="cat-name">' + esc(x.region) + ' accounts</span>' + stock + '</button>';
+      }
+      wrap.innerHTML = html;
+      wrap.querySelectorAll('.cat-item').forEach(function(el) {
+        el.addEventListener('click', function() {
+          wrap.querySelectorAll('.cat-item').forEach(function(c) { c.classList.remove('active'); });
+          el.classList.add('active');
+          selectedRegion = el.dataset.region;
+          selectedAge = null;
+          document.querySelectorAll('#age-cats .cat-item').forEach(function(c) { c.classList.remove('active'); });
+          updateClaimButton();
+        });
       });
-    });
+    } catch(e) {}
   }
 
   async function loadAgeBuckets() {
-    var r = await fetch('/api/age-buckets', { credentials: 'same-origin' });
-    var d = await r.json();
-    if (!d.ok) return;
-
-    var wrap = document.getElementById('age-cats');
-    var html = '';
-    for (var i = 0; i < d.buckets.length; i++) {
-      var b = d.buckets[i];
-      var active = selectedAge === b.key ? ' active' : '';
-      var disabled = b.count === 0 ? ' disabled' : '';
-      var stock = b.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + b.count + ' stock</span>';
-      html += '<button class="cat-item' + active + disabled + '" data-age="' + esc(b.key) + '"' + disabled + '>' +
-        '<span class="cat-name">' + esc(b.label) + '</span>' + stock + '</button>';
-    }
-    wrap.innerHTML = html;
-
-    wrap.querySelectorAll('.cat-item').forEach(function(el) {
-      el.addEventListener('click', function() {
-        wrap.querySelectorAll('.cat-item').forEach(function(c) { c.classList.remove('active'); });
-        el.classList.add('active');
-        selectedAge = el.dataset.age;
-        selectedRegion = null;
-        document.querySelectorAll('#region-cats .cat-item').forEach(function(c) { c.classList.remove('active'); });
-        updateClaimButton();
+    try {
+      var r = await fetch('/api/age-buckets', { credentials: 'same-origin' });
+      var d = await r.json();
+      if (!d.ok) return;
+      var wrap = document.getElementById('age-cats'); if (!wrap) return;
+      var html = '';
+      for (var i = 0; i < d.buckets.length; i++) {
+        var b = d.buckets[i];
+        var active = selectedAge === b.key ? ' active' : '';
+        var disabled = b.count === 0 ? ' disabled' : '';
+        var stock = b.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + b.count + ' stock</span>';
+        html += '<button class="cat-item' + active + disabled + '" data-age="' + esc(b.key) + '"' + disabled + '><span class="cat-name">' + esc(b.label) + '</span>' + stock + '</button>';
+      }
+      wrap.innerHTML = html;
+      wrap.querySelectorAll('.cat-item').forEach(function(el) {
+        el.addEventListener('click', function() {
+          wrap.querySelectorAll('.cat-item').forEach(function(c) { c.classList.remove('active'); });
+          el.classList.add('active');
+          selectedAge = el.dataset.age;
+          selectedRegion = null;
+          document.querySelectorAll('#region-cats .cat-item').forEach(function(c) { c.classList.remove('active'); });
+          updateClaimButton();
+        });
       });
-    });
+    } catch(e) {}
   }
 
   async function loadAccounts() {
-    var el = document.getElementById('accounts-list');
-    var r = await fetch('/api/accounts', { credentials: 'same-origin' });
-    var d = await r.json();
-    if (!d.ok) { el.innerHTML = '<p class="err">' + esc(d.error || 'error') + '</p>'; return; }
-    if (!d.accounts.length) { el.innerHTML = '<p class="muted">No accounts yet.</p>'; return; }
-    var html = '<table><thead><tr><th>Username</th><th>Password</th><th>Location</th><th>Age</th><th>Cookie</th><th>Claimed</th></tr></thead><tbody>';
-    for (var i = 0; i < d.accounts.length; i++) {
-      var a = d.accounts[i];
-      var ageText = a.age != null ? (a.age + 'd') : '—';
-      html += '<tr>'
-        + '<td class="mono">' + esc(a.u) + '</td>'
-        + '<td><span class="reveal reveal-pass" data-val="' + encodeURIComponent(a.p || '') + '">' + mask(a.p) + '</span></td>'
-        + '<td>' + (esc(a.c || '') + (a.ci ? ', ' + esc(a.ci) : '') || '—') + (a.ip ? '<br><span class="muted mono">' + esc(a.ip) + '</span>' : '') + '</td>'
-        + '<td class="muted">' + ageText + '</td>'
-        + '<td>' + (a.ck ? '<span class="reveal reveal-cookie" data-val="' + encodeURIComponent(a.ck) + '">Copy cookie</span>' : '<span class="muted">—</span>') + '</td>'
-        + '<td class="muted">' + new Date(a.issued_at * 1000).toLocaleString() + '</td>'
-        + '</tr>';
-    }
-    html += '</tbody></table>';
-    el.innerHTML = html;
+    var el = document.getElementById('accounts-list'); if (!el) return;
+    try {
+      var r = await fetch('/api/accounts', { credentials: 'same-origin' });
+      var d = await r.json();
+      if (!d.ok) { el.innerHTML = '<p class="err">' + esc(d.error || 'error') + '</p>'; return; }
+      if (!d.accounts.length) { el.innerHTML = '<p class="muted">No accounts yet.</p>'; return; }
+      var html = '<table><thead><tr><th>Username</th><th>Password</th><th>Location</th><th>Age</th><th>Cookie</th><th>Claimed</th></tr></thead><tbody>';
+      for (var i = 0; i < d.accounts.length; i++) {
+        var a = d.accounts[i];
+        var ageText = a.age != null ? (a.age + 'd') : '—';
+        html += '<tr>'
+          + '<td class="mono">' + esc(a.u) + '</td>'
+          + '<td><span class="reveal reveal-pass" data-val="' + encodeURIComponent(a.p || '') + '">' + mask(a.p) + '</span></td>'
+          + '<td>' + (esc(a.c || '') + (a.ci ? ', ' + esc(a.ci) : '') || '—') + (a.ip ? '<br><span class="muted mono">' + esc(a.ip) + '</span>' : '') + '</td>'
+          + '<td class="muted">' + ageText + '</td>'
+          + '<td>' + (a.ck ? '<span class="reveal reveal-cookie" data-val="' + encodeURIComponent(a.ck) + '">Copy cookie</span>' : '<span class="muted">—</span>') + '</td>'
+          + '<td class="muted">' + new Date(a.issued_at * 1000).toLocaleString() + '</td>'
+          + '</tr>';
+      }
+      html += '</tbody></table>';
+      el.innerHTML = html;
 
-    document.querySelectorAll('.reveal-pass').forEach(function(el) {
-      el.addEventListener('click', function(){
-        var v = decodeURIComponent(this.dataset.val);
-        if (this.dataset.revealed === '1') { this.textContent = mask(v); this.dataset.revealed = '0'; }
-        else { this.textContent = v; this.dataset.revealed = '1'; }
+      el.querySelectorAll('.reveal-pass').forEach(function(x) {
+        x.addEventListener('click', function() {
+          var v = decodeURIComponent(this.dataset.val);
+          if (this.dataset.revealed === '1') { this.textContent = mask(v); this.dataset.revealed = '0'; }
+          else { this.textContent = v; this.dataset.revealed = '1'; }
+        });
       });
-    });
-    document.querySelectorAll('.reveal-cookie').forEach(function(el) {
-      el.addEventListener('click', async function(){
-        var v = decodeURIComponent(this.dataset.val);
-        try {
-          await navigator.clipboard.writeText(v);
-          var old = this.textContent;
-          this.textContent = 'Copied!';
-          this.classList.add('copied');
+      el.querySelectorAll('.reveal-cookie').forEach(function(x) {
+        x.addEventListener('click', async function() {
+          var v = decodeURIComponent(this.dataset.val);
           var self = this;
-          setTimeout(function() { self.textContent = old; self.classList.remove('copied'); }, 1500);
-        } catch(e) { this.textContent = 'Failed'; var self2 = this; setTimeout(function() { self2.textContent = 'Copy cookie'; }, 1500); }
+          try {
+            await navigator.clipboard.writeText(v);
+            var old = self.textContent;
+            self.textContent = 'Copied!';
+            self.classList.add('copied');
+            setTimeout(function() { self.textContent = old; self.classList.remove('copied'); }, 1500);
+          } catch(e) {
+            self.textContent = 'Failed';
+            setTimeout(function() { self.textContent = 'Copy cookie'; }, 1500);
+          }
+        });
       });
-    });
+    } catch(e) {}
   }
 
   function renderPreview(acc) {
-    currentAccount = acc;
     var title = document.getElementById('preview-title');
     var body = document.getElementById('preview-body');
+    if (!title || !body) return;
     if (!acc) {
       title.textContent = 'No account yet';
       body.innerHTML = '<p class="muted" style="font-size:13px">Pick a category on the left and click <b>Claim</b>.</p>';
       return;
     }
     title.textContent = 'Account claimed';
-
     var ageText = acc.age != null ? (acc.age + ' days') : '—';
     var loc = [acc.c, acc.ci].filter(Boolean).join(', ') || '—';
-
     var html = '<div class="acc-preview">';
     html += '<div class="row"><span class="k">Username</span><span class="v">' + esc(acc.u) + '</span></div>';
     html += '<div class="row"><span class="k">Password</span><span class="v reveal" id="pv-pass" data-val="' + encodeURIComponent(acc.p || '') + '">' + mask(acc.p) + '</span></div>';
     html += '<div class="row"><span class="k">Age</span><span class="v">' + ageText + '</span></div>';
     html += '<div class="row"><span class="k">Location</span><span class="v">' + esc(loc) + '</span></div>';
-    if (acc.ip) {
-      html += '<div class="row"><span class="k">IP</span><span class="v">' + esc(acc.ip) + '</span></div>';
-    }
-    if (acc.ck) {
-      html += '<div class="row"><span class="k">Cookie</span><span class="v reveal" id="pv-cookie" data-val="' + encodeURIComponent(acc.ck) + '">Copy cookie</span></div>';
-    }
+    if (acc.ip) html += '<div class="row"><span class="k">IP</span><span class="v">' + esc(acc.ip) + '</span></div>';
+    if (acc.ck) html += '<div class="row"><span class="k">Cookie</span><span class="v reveal" id="pv-cookie" data-val="' + encodeURIComponent(acc.ck) + '">Copy cookie</span></div>';
     html += '</div>';
     body.innerHTML = html;
 
     var passEl = document.getElementById('pv-pass');
-    if (passEl) passEl.addEventListener('click', function(){
+    if (passEl) passEl.addEventListener('click', function() {
       var v = decodeURIComponent(this.dataset.val);
       if (this.dataset.revealed === '1') { this.textContent = mask(v); this.dataset.revealed = '0'; }
       else { this.textContent = v; this.dataset.revealed = '1'; }
     });
-
     var ckEl = document.getElementById('pv-cookie');
-    if (ckEl) ckEl.addEventListener('click', async function(){
+    if (ckEl) ckEl.addEventListener('click', async function() {
       var v = decodeURIComponent(this.dataset.val);
       var self = this;
       try {
@@ -848,12 +906,15 @@ function dashboardPage(user, keyStatus) {
         self.textContent = 'Copied!';
         self.classList.add('copied');
         setTimeout(function() { self.textContent = 'Copy cookie'; self.classList.remove('copied'); }, 1500);
-      } catch(e) { self.textContent = 'Failed'; setTimeout(function() { self.textContent = 'Copy cookie'; }, 1500); }
+      } catch(e) {
+        self.textContent = 'Failed';
+        setTimeout(function() { self.textContent = 'Copy cookie'; }, 1500);
+      }
     });
   }
 
   function startCooldown(sec) {
-    var btn = document.getElementById('btn-claim');
+    var btn = document.getElementById('btn-claim'); if (!btn) return;
     var left = sec;
     if (cooldownTimer) clearInterval(cooldownTimer);
     btn.dataset.cooldownText = 'Wait ' + left + 's';
@@ -872,8 +933,9 @@ function dashboardPage(user, keyStatus) {
     }, 1000);
   }
 
-  document.getElementById('btn-claim').addEventListener('click', async function() {
-    var btn = document.getElementById('btn-claim');
+  var claimBtn = document.getElementById('btn-claim');
+  if (claimBtn) claimBtn.addEventListener('click', async function() {
+    var btn = claimBtn;
     var out = document.getElementById('claim-out');
     out.className = 'note'; out.textContent = 'Claiming…';
     btn.disabled = true;
@@ -881,10 +943,7 @@ function dashboardPage(user, keyStatus) {
       var r = await fetch('/api/claim', {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          region: selectedRegion || null,
-          age: selectedAge || null,
-        })
+        body: JSON.stringify({ region: selectedRegion || null, age: selectedAge || null })
       });
       var d = await r.json();
       if (d.ok) {
@@ -898,59 +957,36 @@ function dashboardPage(user, keyStatus) {
       } else if (d.error === 'cooldown') {
         out.className = 'note err'; out.textContent = d.message || 'Cooldown';
         startCooldown(d.wait_seconds || cooldownSec);
-      }
-      else if (d.error === 'daily_limit') {
+      } else if (d.error === 'daily_limit') {
         out.className = 'note err'; out.textContent = 'Daily limit reached';
         resetInSec = d.reset_in || 0; updateLimitBanner();
-      }
-      else if (d.error === 'pool_empty') {
+      } else if (d.error === 'pool_empty') {
         out.className = 'note err'; out.textContent = 'Category is empty. Try another.';
         updateClaimButton();
-      }
-      else if (d.error && d.error.startsWith('key_')) {
+      } else if (d.error && d.error.indexOf('key_') === 0) {
         out.className = 'note err'; out.textContent = 'Your key is ' + d.error.replace('key_','') + '.';
-      }
-      else {
+      } else {
         out.className = 'note err'; out.textContent = d.error || 'error';
         updateClaimButton();
       }
-    } catch(e) { out.className = 'note err'; out.textContent = String(e); updateClaimButton(); }
+    } catch(e) {
+      out.className = 'note err'; out.textContent = String(e);
+      updateClaimButton();
+    }
   });
 
   setInterval(function() {
     if (resetInSec > 0) resetInSec -= 1;
-    document.getElementById('reset-in').textContent = fmtHMS(Math.max(0, resetInSec));
-    if (limitUsed >= limitMax) document.getElementById('limit-time').textContent = fmtHMS(Math.max(0, resetInSec)) + ' left';
+    var riEl = document.getElementById('reset-in'); if (riEl) riEl.textContent = fmtHMS(Math.max(0, resetInSec));
+    if (limitUsed >= limitMax) {
+      var tEl = document.getElementById('limit-time');
+      if (tEl) tEl.textContent = fmtHMS(Math.max(0, resetInSec)) + ' left';
+    }
   }, 1000);
 
   loadState(); loadRegions(); loadAgeBuckets(); loadAccounts();
-  </script>
-  `);
-}
-
-function docsPage() {
-  return pageShell("Docs", `
-  <h1>Docs</h1>
-  <p class="sub">How GHGen works.</p>
-  <div class="card"><h2>Register</h2><p class="muted">Pick a username, email, password and your Roblox username. We'll send a code to your email.</p></div>
-  <div class="card"><h2>Login</h2><p class="muted">Enter username + password. We'll send a fresh code to your registered email every time.</p></div>
-  <div class="card"><h2>Claim</h2><p class="muted">Pick a Category (Location or Age), then click Claim. Server checks your daily limit and cooldown.</p></div>
-  <div class="card"><h2>Filters</h2><p class="muted">Location — country where the account was created. Age — how many days since the Roblox account was created.</p></div>
-  <div class="card"><h2>Limits</h2><p class="muted">Day: 3/20s · Week: 10/30s · Month: 30/60s · Year: 40/70s. 24h window starts on first claim.</p></div>
-  `);
-}
-
-function escapeHtml(s) {
-  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function maskEmail(e) {
-  if (!e) return "your email";
-  const [name, domain] = e.split("@");
-  if (!name || !domain) return e;
-  const shown = name.length <= 3 ? name[0] + "***" : name.slice(0, 2) + "***" + name.slice(-1);
-  return `${shown}@${domain}`;
-}
+})();
+`;
 
 // ============================================================
 //  AUTH HANDLERS
@@ -1025,23 +1061,17 @@ async function handleRegisterStart(request, env) {
   const existing_username = await env.DB.prepare(
     `SELECT id, email_verified FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
   ).bind(username).first();
-  if (existing_username && existing_username.email_verified === 1) {
-    return json({ ok: false, error: "username_taken" }, 409);
-  }
+  if (existing_username && existing_username.email_verified === 1) return json({ ok: false, error: "username_taken" }, 409);
 
   const existing_email = await env.DB.prepare(
     `SELECT id, email_verified FROM ghgen_users WHERE email = ? LIMIT 1`
   ).bind(email).first();
-  if (existing_email && existing_email.email_verified === 1) {
-    return json({ ok: false, error: "email_already_registered" }, 409);
-  }
+  if (existing_email && existing_email.email_verified === 1) return json({ ok: false, error: "email_already_registered" }, 409);
 
   const existing_roblox = await env.DB.prepare(
     `SELECT id, email_verified FROM ghgen_users WHERE roblox_username = ? LIMIT 1`
   ).bind(roblox_username).first();
-  if (existing_roblox && existing_roblox.email_verified === 1) {
-    return json({ ok: false, error: "roblox_username_taken" }, 409);
-  }
+  if (existing_roblox && existing_roblox.email_verified === 1) return json({ ok: false, error: "roblox_username_taken" }, 409);
 
   let keyUser = null;
   if (key) {
@@ -1133,9 +1163,7 @@ async function handleLegacySetup(request, env) {
   if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
   if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
 
-  const user = await env.DB.prepare(
-    `SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`
-  ).bind(v.email).first();
+  const user = await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(v.email).first();
   if (!user) return json({ ok: false, error: "user_not_found" }, 400);
 
   const { hash, salt } = await hashPassword(password);
@@ -1144,7 +1172,6 @@ async function handleLegacySetup(request, env) {
   ).bind(hash, salt, now(), user.id).run();
 
   await env.DB.prepare(`UPDATE ghgen_verifications SET used = 1 WHERE id = ?`).bind(v.id).run();
-
   const sid = await createSession(env, user.id, getIP(request));
   await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
     .bind(user.id, "legacy_password_set", getIP(request), now()).run();
@@ -1200,9 +1227,7 @@ async function handleForgotReset(request, env) {
   if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
   if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
 
-  const user = await env.DB.prepare(
-    `SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`
-  ).bind(v.email).first();
+  const user = await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(v.email).first();
   if (!user) return json({ ok: false, error: "user_not_found" }, 400);
 
   const { hash, salt } = await hashPassword(password);
@@ -1211,7 +1236,6 @@ async function handleForgotReset(request, env) {
   ).bind(hash, salt, now(), user.id).run();
 
   await env.DB.prepare(`UPDATE ghgen_verifications SET used = 1 WHERE id = ?`).bind(v.id).run();
-
   const sid = await createSession(env, user.id, getIP(request));
   await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
     .bind(user.id, "password_reset", getIP(request), now()).run();
@@ -1260,6 +1284,7 @@ async function handleState(env, request) {
 async function handleRegions(env, request) {
   const user = await requireUser(env, request);
   if (!user) return json({ ok: false, error: "unauthorized" }, 401);
+  await refreshAges(env);
 
   const rows = await env.DB.prepare(
     `SELECT region, COUNT(*) as c FROM ghgen_pool WHERE status='available' AND region IS NOT NULL AND region != '' GROUP BY region ORDER BY c DESC`
@@ -1271,6 +1296,7 @@ async function handleRegions(env, request) {
 async function handleAgeBuckets(env, request) {
   const user = await requireUser(env, request);
   if (!user) return json({ ok: false, error: "unauthorized" }, 401);
+  await refreshAges(env);
 
   const result = [];
   for (const b of AGE_BUCKETS) {
@@ -1294,7 +1320,7 @@ async function handleAccounts(env, request) {
   if (!user) return json({ ok: false, error: "unauthorized" }, 401);
 
   const rows = await env.DB.prepare(
-    `SELECT id, payload, issued_at FROM ghgen_pool WHERE issued_to = ? ORDER BY issued_at DESC LIMIT 100`
+    `SELECT id, payload, issued_at FROM ghgen_pool WHERE issued_to = ? ORDER BY issued_at DESC LIMIT 200`
   ).bind(user.id).all();
 
   const accounts = [];
@@ -1307,6 +1333,7 @@ async function handleAccounts(env, request) {
 async function handleClaim(env, request) {
   const user = await requireUser(env, request);
   if (!user) return json({ ok: false, error: "unauthorized" }, 401);
+  await refreshAges(env);
 
   let body = {};
   try { body = await request.json(); } catch {}
@@ -1413,8 +1440,8 @@ async function handlePoolUpload(request, env) {
     try {
       const payload = await encryptPayload(env, clean);
       await env.DB.prepare(
-        `INSERT INTO ghgen_pool (payload, status, created_at, region, age_days) VALUES (?, 'available', ?, ?, ?)`
-      ).bind(payload, ts, region, ageDays).run();
+        `INSERT INTO ghgen_pool (payload, status, created_at, region, age_days, age_base_at) VALUES (?, 'available', ?, ?, ?, ?)`
+      ).bind(payload, ts, region, ageDays, ts).run();
       added++;
     } catch (e) {
       skipped++;
@@ -1447,48 +1474,7 @@ export default {
       let path = url.pathname;
       if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
 
-      // auth
-      if (request.method === "POST" && path === "/api/auth/login-start")    return await handleLoginStart(request, env);
-      if (request.method === "POST" && path === "/api/auth/register-start") return await handleRegisterStart(request, env);
-      if (request.method === "POST" && path === "/api/auth/verify")         return await handleVerify(request, env);
-      if (request.method === "POST" && path === "/api/auth/legacy-setup")   return await handleLegacySetup(request, env);
-      if (request.method === "POST" && path === "/api/auth/forgot-start")   return await handleForgotStart(request, env);
-      if (request.method === "POST" && path === "/api/auth/forgot-reset")   return await handleForgotReset(request, env);
-      if (request.method === "GET"  && path === "/logout")                  return await handleLogout(env, request);
-
-      // user
-      if (request.method === "GET"  && path === "/api/state")        return await handleState(env, request);
-      if (request.method === "GET"  && path === "/api/regions")      return await handleRegions(env, request);
-      if (request.method === "GET"  && path === "/api/age-buckets")  return await handleAgeBuckets(env, request);
-      if (request.method === "GET"  && path === "/api/accounts")     return await handleAccounts(env, request);
-      if (request.method === "POST" && path === "/api/claim")        return await handleClaim(env, request);
-
-      // pool admin
-      if (request.method === "POST" && path === "/api/pool/upload") return await handlePoolUpload(request, env);
-      if (request.method === "GET"  && path === "/api/pool/stats")  return await handlePoolStats(request, env);
-
-      // pages
-      const user = await requireUser(env, request);
-      if (request.method === "GET" && path === "/") {
-        if (user) return html("", 302, { "Location": "/dashboard" });
-        return html(authPage());
-      }
-      if (request.method === "GET" && path === "/dashboard") {
-        if (!user) return html("", 302, { "Location": "/" });
-        const ks = await loadKeyStatus(env, user.key);
-        return html(dashboardPage(user, ks));
-      }
-      if (request.method === "GET" && path === "/docs") return html(docsPage());
-
-      return html(pageShell("404", `<h1>404</h1><p class="sub">Not found.</p>`), 404);
-    } catch (e) {
-      console.error("ghgen error:", e);
-      return json({
-        ok: false,
-        error: "internal",
-        message: String(e?.message || e),
-        stack: String(e?.stack || "").slice(0, 500)
-      }, 500);
-    }
-  },
-};
+      // static
+      if (request.method === "GET" && path === "/static/style.css")     return css(STYLE_CSS);
+      if (request.method === "GET" && path === "/static/auth.js")       return js(AUTH_JS);
+      if (request.method === "GET" && path === "/static/dashboard
