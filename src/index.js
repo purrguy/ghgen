@@ -79,6 +79,21 @@ function validEmail(e) { return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}
 function validUsername(u) { return /^[A-Za-z0-9_]{3,32}$/.test(u); }
 function validRobloxUsername(u) { return /^[A-Za-z0-9_]{3,20}$/.test(u); }
 
+// Хелпер: ответ с двумя Set-Cookie
+function jsonWithCookies(data, status, cookies) {
+  const headers = new Headers();
+  headers.set("Content-Type", "application/json; charset=utf-8");
+  headers.set("Cache-Control", "no-store");
+  for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
+  for (const c of cookies) headers.append("Set-Cookie", c);
+  return new Response(JSON.stringify(data), { status, headers });
+}
+
+// Хелпер: ответ с одним Set-Cookie
+function jsonWithCookie(data, status, cookie) {
+  return jsonWithCookies(data, status, [cookie]);
+}
+
 // ============================================================
 //  PASSWORD HASHING (PBKDF2)
 // ============================================================
@@ -205,6 +220,7 @@ function requireUser(env, request) {
 }
 
 async function loadKeyStatus(env, key) {
+  if (!key) return { valid: false, reason: "no_key" };
   const r = await env.DB.prepare(`SELECT * FROM keys WHERE key = ? LIMIT 1`).bind(key).first();
   if (!r) return { valid: false, reason: "invalid_key" };
   if (r.revoked === 1) return { valid: false, reason: "revoked", plan: r.plan };
@@ -274,6 +290,8 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .auth-tabs button{flex:1;background:transparent;border:none;padding:10px;font-size:13px;font-weight:600;color:var(--muted);border-radius:7px;cursor:pointer}
 .auth-tabs button.active{background:var(--card);color:var(--text)}
 .auth-tabs button:hover{color:var(--text)}
+.region-select{display:flex;gap:10px;align-items:flex-end}
+.region-select > div:first-child{flex:1}
 .region-hint{margin-top:8px;padding:10px 12px;background:#0e0e11;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--muted);line-height:1.7;max-height:150px;overflow-y:auto}
 .region-hint .r{display:flex;justify-content:space-between;padding:2px 0}
 .region-hint .r b{color:var(--text);font-weight:500}
@@ -355,7 +373,7 @@ function authPage(msg = "") {
         <p class="note" id="forgot-out"></p>
       </div>
 
-      <!-- VERIFY (login / register / forgot / legacy) -->
+      <!-- VERIFY -->
       <div id="pane-verify" style="display:none">
         <p class="muted" style="margin-bottom:10px">Code sent to <b id="verify-email">your email</b>. Expires in 10 min.</p>
         <label>Verification code</label>
@@ -377,9 +395,7 @@ function authPage(msg = "") {
   </div>
 
   <script>
-  // mode: 'login' | 'register' | 'forgot'
   let mode = 'login';
-  // verifyMode: 'login' | 'register' | 'forgot' | 'legacy'
   let verifyMode = 'login';
   let lastUsername = '';
 
@@ -390,6 +406,7 @@ function authPage(msg = "") {
     document.getElementById('pane-login').style.display = m === 'login' ? 'block' : 'none';
     document.getElementById('pane-register').style.display = m === 'register' ? 'block' : 'none';
     document.getElementById('pane-forgot').style.display = 'none';
+    document.querySelector('.auth-tabs').style.display = 'flex';
   }
 
   function showForgot() {
@@ -534,7 +551,7 @@ function authPage(msg = "") {
 }
 
 // ============================================================
-//  DASHBOARD (пока минимальный — полный редизайн в следующем шаге)
+//  DASHBOARD
 // ============================================================
 function dashboardPage(user, keyStatus) {
   return pageShell("Dashboard", `
@@ -580,7 +597,6 @@ function dashboardPage(user, keyStatus) {
   </div>
 
   <script>
-  const USER_KEY = ${JSON.stringify(user.key || '')};
   function mask(v){ if(!v) return '—'; const s=String(v); if(s.length<=6) return s[0]+'•••'; return s.slice(0,3)+'•••'+s.slice(-2); }
   function fmtHMS(sec){ const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
 
@@ -751,20 +767,20 @@ async function handleLoginStart(request, env) {
 
   const ts = now();
 
-  // LEGACY: без пароля — пусть установит через email-код
+  // LEGACY: без пароля — устанавливает через email-код
   if (!user.password_hash || !user.salt) {
     const code = randomCode6();
     await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(user.email).run();
-    const ins = await env.DB.prepare(
-      `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'legacy_setup', ?, ?) RETURNING id`
-    ).bind(user.email, code, ts, ts + CODE_TTL).first();
+    const insRes = await env.DB.prepare(
+      `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'legacy_setup', ?, ?)`
+    ).bind(user.email, code, ts, ts + CODE_TTL).run();
+    const insId = insRes.meta.last_row_id;
 
     const sent = await sendEmail(env, user.email, code);
     if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
 
-    return json({ ok: true, legacy: true, email_masked: maskEmail(user.email) }, 200, {
-      "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
-    });
+    return jsonWithCookie({ ok: true, legacy: true, email_masked: maskEmail(user.email) }, 200,
+      cookieHeader("GHGEN_PENDING", String(insId), CODE_TTL));
   }
 
   if (!password) return json({ ok: false, error: "password_required" }, 400);
@@ -774,16 +790,16 @@ async function handleLoginStart(request, env) {
 
   const code = randomCode6();
   await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(user.email).run();
-  const ins = await env.DB.prepare(
-    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'login', ?, ?) RETURNING id`
-  ).bind(user.email, code, ts, ts + CODE_TTL).first();
+  const insRes = await env.DB.prepare(
+    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'login', ?, ?)`
+  ).bind(user.email, code, ts, ts + CODE_TTL).run();
+  const insId = insRes.meta.last_row_id;
 
   const sent = await sendEmail(env, user.email, code);
   if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
 
-  return json({ ok: true, email_masked: maskEmail(user.email) }, 200, {
-    "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
-  });
+  return jsonWithCookie({ ok: true, email_masked: maskEmail(user.email) }, 200,
+    cookieHeader("GHGEN_PENDING", String(insId), CODE_TTL));
 }
 
 async function handleRegisterStart(request, env) {
@@ -851,16 +867,16 @@ async function handleRegisterStart(request, env) {
 
   const code = randomCode6();
   await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(email).run();
-  const ins = await env.DB.prepare(
-    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'register', ?, ?) RETURNING id`
-  ).bind(email, code, ts, ts + CODE_TTL).first();
+  const insRes = await env.DB.prepare(
+    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'register', ?, ?)`
+  ).bind(email, code, ts, ts + CODE_TTL).run();
+  const insId = insRes.meta.last_row_id;
 
   const sent = await sendEmail(env, email, code);
   if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
 
-  return json({ ok: true, email_masked: maskEmail(email) }, 200, {
-    "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
-  });
+  return jsonWithCookie({ ok: true, email_masked: maskEmail(email) }, 200,
+    cookieHeader("GHGEN_PENDING", String(insId), CODE_TTL));
 }
 
 async function handleVerify(request, env) {
@@ -891,10 +907,10 @@ async function handleVerify(request, env) {
   await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
     .bind(user.id, v.purpose === "register" ? "register" : "login", getIP(request), now()).run();
 
-  return json({ ok: true }, 200, {
-    "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
-    "Set-Cookie-2": clearCookieHeader("GHGEN_PENDING")
-  });
+  return jsonWithCookies({ ok: true }, 200, [
+    cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
+    clearCookieHeader("GHGEN_PENDING")
+  ]);
 }
 
 async function handleLegacySetup(request, env) {
@@ -931,10 +947,10 @@ async function handleLegacySetup(request, env) {
   await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
     .bind(user.id, "legacy_password_set", getIP(request), now()).run();
 
-  return json({ ok: true }, 200, {
-    "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
-    "Set-Cookie-2": clearCookieHeader("GHGEN_PENDING")
-  });
+  return jsonWithCookies({ ok: true }, 200, [
+    cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
+    clearCookieHeader("GHGEN_PENDING")
+  ]);
 }
 
 async function handleForgotStart(request, env) {
@@ -952,16 +968,16 @@ async function handleForgotStart(request, env) {
   const code = randomCode6();
   const ts = now();
   await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(user.email).run();
-  const ins = await env.DB.prepare(
-    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'forgot', ?, ?) RETURNING id`
-  ).bind(user.email, code, ts, ts + CODE_TTL).first();
+  const insRes = await env.DB.prepare(
+    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'forgot', ?, ?)`
+  ).bind(user.email, code, ts, ts + CODE_TTL).run();
+  const insId = insRes.meta.last_row_id;
 
   const sent = await sendEmail(env, user.email, code);
   if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
 
-  return json({ ok: true, email_masked: maskEmail(user.email) }, 200, {
-    "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
-  });
+  return jsonWithCookie({ ok: true, email_masked: maskEmail(user.email) }, 200,
+    cookieHeader("GHGEN_PENDING", String(insId), CODE_TTL));
 }
 
 async function handleForgotReset(request, env) {
@@ -998,10 +1014,10 @@ async function handleForgotReset(request, env) {
   await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
     .bind(user.id, "password_reset", getIP(request), now()).run();
 
-  return json({ ok: true }, 200, {
-    "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
-    "Set-Cookie-2": clearCookieHeader("GHGEN_PENDING")
-  });
+  return jsonWithCookies({ ok: true }, 200, [
+    cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
+    clearCookieHeader("GHGEN_PENDING")
+  ]);
 }
 
 async function handleLogout(env, request) {
@@ -1223,7 +1239,12 @@ export default {
       return html(pageShell("404", `<h1>404</h1><p class="sub">Not found.</p>`), 404);
     } catch (e) {
       console.error("ghgen error:", e);
-      return json({ ok: false, error: "internal", message: String(e?.message || e) }, 500);
+      return json({
+        ok: false,
+        error: "internal",
+        message: String(e?.message || e),
+        stack: String(e?.stack || "").slice(0, 500)
+      }, 500);
     }
   },
 };
