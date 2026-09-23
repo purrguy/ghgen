@@ -409,9 +409,9 @@ function authPage(msg = "") {
   </div>
 
   <script>
-  let mode = 'login';
-  let verifyMode = 'login';
-  let lastUsername = '';
+  var mode = 'login';
+  var verifyMode = 'login';
+  var lastUsername = '';
 
   function setMode(m) {
     mode = m;
@@ -447,8 +447,8 @@ function authPage(msg = "") {
     document.getElementById('verify-code').focus();
     document.getElementById('verify-out').textContent = '';
 
-    const needsPass = (vm === 'forgot' || vm === 'legacy');
-    const wrap = document.getElementById('extra-pass-wrap');
+    var needsPass = (vm === 'forgot' || vm === 'legacy');
+    var wrap = document.getElementById('extra-pass-wrap');
     wrap.style.display = needsPass ? 'block' : 'none';
     if (needsPass) {
       document.getElementById('extra-pass-hint').textContent =
@@ -459,10 +459,10 @@ function authPage(msg = "") {
     }
   }
 
-  document.getElementById('tab-login').addEventListener('click', () => setMode('login'));
-  document.getElementById('tab-register').addEventListener('click', () => setMode('register'));
+  document.getElementById('tab-login').addEventListener('click', function() { setMode('login'); });
+  document.getElementById('tab-register').addEventListener('click', function() { setMode('register'); });
   document.getElementById('link-forgot').addEventListener('click', showForgot);
-  document.getElementById('link-back-login').addEventListener('click', () => {
+  document.getElementById('link-back-login').addEventListener('click', function() {
     document.querySelector('.auth-tabs').style.display = 'flex';
     document.getElementById('pane-forgot').style.display = 'none';
     setMode('login');
@@ -470,7 +470,7 @@ function authPage(msg = "") {
   document.getElementById('link-back-verify').addEventListener('click', backFromVerify);
 
   async function post(path, body) {
-    const r = await fetch(path, {
+    var r = await fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -479,22 +479,22 @@ function authPage(msg = "") {
     return await r.json();
   }
 
-  document.getElementById('btn-login').addEventListener('click', async () => {
-    const out = document.getElementById('login-out');
+  document.getElementById('btn-login').addEventListener('click', async function() {
+    var out = document.getElementById('login-out');
     out.className = 'note'; out.textContent = 'Checking…';
-    const username = document.getElementById('login-user').value.trim();
-    const password = document.getElementById('login-pass').value;
+    var username = document.getElementById('login-user').value.trim();
+    var password = document.getElementById('login-pass').value;
     if (!username) { out.className = 'note err'; out.textContent = 'Enter username'; return; }
-    const d = await post('/api/auth/login-start', { username, password });
+    var d = await post('/api/auth/login-start', { username: username, password: password });
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
     lastUsername = username;
     showVerify(d.email_masked, d.legacy ? 'legacy' : 'login');
   });
 
-  document.getElementById('btn-register').addEventListener('click', async () => {
-    const out = document.getElementById('register-out');
+  document.getElementById('btn-register').addEventListener('click', async function() {
+    var out = document.getElementById('register-out');
     out.className = 'note'; out.textContent = 'Creating…';
-    const payload = {
+    var payload = {
       username: document.getElementById('reg-user').value.trim(),
       email: document.getElementById('reg-email').value.trim().toLowerCase(),
       password: document.getElementById('reg-pass').value,
@@ -504,56 +504,56 @@ function authPage(msg = "") {
     if (!payload.username || !payload.email || !payload.password || !payload.roblox_username) {
       out.className = 'note err'; out.textContent = 'Fill all required fields'; return;
     }
-    const d = await post('/api/auth/register-start', payload);
+    var d = await post('/api/auth/register-start', payload);
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
     lastUsername = payload.username;
     showVerify(d.email_masked, 'register');
   });
 
-  document.getElementById('btn-forgot').addEventListener('click', async () => {
-    const out = document.getElementById('forgot-out');
+  document.getElementById('btn-forgot').addEventListener('click', async function() {
+    var out = document.getElementById('forgot-out');
     out.className = 'note'; out.textContent = 'Sending…';
-    const username = document.getElementById('forgot-user').value.trim();
+    var username = document.getElementById('forgot-user').value.trim();
     if (!username) { out.className = 'note err'; out.textContent = 'Enter username'; return; }
-    const d = await post('/api/auth/forgot-start', { username });
+    var d = await post('/api/auth/forgot-start', { username: username });
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
     lastUsername = username;
     showVerify(d.email_masked, 'forgot');
   });
 
-  document.getElementById('btn-verify').addEventListener('click', async () => {
-    const out = document.getElementById('verify-out');
+  document.getElementById('btn-verify').addEventListener('click', async function() {
+    var out = document.getElementById('verify-out');
     out.className = 'note'; out.textContent = 'Verifying…';
-    const code = document.getElementById('verify-code').value.trim();
+    var code = document.getElementById('verify-code').value.trim();
     if (!/^\\d{6}$/.test(code)) { out.className = 'note err'; out.textContent = 'Enter 6-digit code'; return; }
 
-    let endpoint = '/api/auth/verify';
-    let payload = { code };
+    var endpoint = '/api/auth/verify';
+    var payload = { code: code };
 
     if (verifyMode === 'forgot') {
-      const password = document.getElementById('extra-pass').value;
+      var password = document.getElementById('extra-pass').value;
       if (password.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
       endpoint = '/api/auth/forgot-reset';
-      payload = { code, password };
+      payload = { code: code, password: password };
     } else if (verifyMode === 'legacy') {
-      const password = document.getElementById('extra-pass').value;
-      if (password.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
+      var password2 = document.getElementById('extra-pass').value;
+      if (password2.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
       endpoint = '/api/auth/legacy-setup';
-      payload = { code, password };
+      payload = { code: code, password: password2 };
     }
 
-    const d = await post(endpoint, payload);
+    var d = await post(endpoint, payload);
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
     window.location.href = '/dashboard';
   });
 
-  document.getElementById('verify-code').addEventListener('keydown', e => {
+  document.getElementById('verify-code').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') document.getElementById('btn-verify').click();
   });
-  document.getElementById('forgot-user').addEventListener('keydown', e => {
+  document.getElementById('forgot-user').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') document.getElementById('btn-forgot').click();
   });
-  document.getElementById('login-pass').addEventListener('keydown', e => {
+  document.getElementById('login-pass').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') document.getElementById('btn-login').click();
   });
   </script>
@@ -636,22 +636,22 @@ function dashboardPage(user, keyStatus) {
   </div>
 
   <script>
-  function mask(v){ if(!v) return '—'; const s=String(v); if(s.length<=6) return s[0]+'•••'; return s.slice(0,3)+'•••'+s.slice(-2); }
-  function fmtHMS(sec){ const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
+  function mask(v){ if(!v) return '—'; var s=String(v); if(s.length<=6) return s[0]+'•••'; return s.slice(0,3)+'•••'+s.slice(-2); }
+  function fmtHMS(sec){ var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-  let resetInSec = 0, cooldownSec = 20, limitMax = 3, limitUsed = 0, cooldownTimer = null;
-  let selectedRegion = null;
-  let selectedAge = null;
-  let currentAccount = null;
+  var resetInSec = 0, cooldownSec = 20, limitMax = 3, limitUsed = 0, cooldownTimer = null;
+  var selectedRegion = null;
+  var selectedAge = null;
+  var currentAccount = null;
 
-  document.getElementById('tab-free').addEventListener('click', () => {
+  document.getElementById('tab-free').addEventListener('click', function() {
     document.getElementById('tab-free').classList.add('active');
     document.getElementById('tab-premium').classList.remove('active');
     document.getElementById('pane-free').style.display = 'block';
     document.getElementById('pane-premium').style.display = 'none';
   });
-  document.getElementById('tab-premium').addEventListener('click', () => {
+  document.getElementById('tab-premium').addEventListener('click', function() {
     document.getElementById('tab-premium').classList.add('active');
     document.getElementById('tab-free').classList.remove('active');
     document.getElementById('pane-free').style.display = 'none';
@@ -659,8 +659,8 @@ function dashboardPage(user, keyStatus) {
   });
 
   async function loadState() {
-    const r = await fetch('/api/state', { credentials: 'same-origin' });
-    const d = await r.json();
+    var r = await fetch('/api/state', { credentials: 'same-origin' });
+    var d = await r.json();
     if (!d.ok) return;
     resetInSec = d.reset_in || 0;
     cooldownSec = d.cooldown_seconds || 20;
@@ -676,8 +676,8 @@ function dashboardPage(user, keyStatus) {
   }
 
   function updateLimitBanner() {
-    const banner = document.getElementById('limit-banner');
-    const timeEl = document.getElementById('limit-time');
+    var banner = document.getElementById('limit-banner');
+    var timeEl = document.getElementById('limit-time');
     if (limitUsed >= limitMax) {
       banner.classList.add('show');
       timeEl.textContent = fmtHMS(resetInSec) + ' left';
@@ -686,11 +686,11 @@ function dashboardPage(user, keyStatus) {
   }
 
   function updateClaimButton() {
-    const btn = document.getElementById('btn-claim');
+    var btn = document.getElementById('btn-claim');
     if (!btn) return;
-    const hasFilter = (selectedRegion !== null || selectedAge !== null);
-    const outOfLimit = limitUsed >= limitMax;
-    const onCooldown = !!cooldownTimer;
+    var hasFilter = (selectedRegion !== null || selectedAge !== null);
+    var outOfLimit = limitUsed >= limitMax;
+    var onCooldown = !!cooldownTimer;
     btn.disabled = !hasFilter || outOfLimit || onCooldown;
     if (cooldownTimer) btn.textContent = btn.dataset.cooldownText || 'Wait…';
     else if (!hasFilter) btn.textContent = 'Pick a category';
@@ -699,109 +699,115 @@ function dashboardPage(user, keyStatus) {
   }
 
   async function loadRegions() {
-    const r = await fetch('/api/regions', { credentials: 'same-origin' });
-    const d = await r.json();
+    var r = await fetch('/api/regions', { credentials: 'same-origin' });
+    var d = await r.json();
     if (!d.ok) return;
 
-    const wrap = document.getElementById('region-cats');
+    var wrap = document.getElementById('region-cats');
     if (!d.regions.length) {
       wrap.innerHTML = '<p class="muted" style="padding:8px 4px">Pool is empty.</p>';
       return;
     }
-    let html = '';
-    for (const x of d.regions) {
-      const active = selectedRegion === x.region ? ' active' : '';
-      const disabled = x.count === 0 ? ' disabled' : '';
-      const stock = x.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + x.count + ' stock</span>';
+    var html = '';
+    for (var i = 0; i < d.regions.length; i++) {
+      var x = d.regions[i];
+      var active = selectedRegion === x.region ? ' active' : '';
+      var disabled = x.count === 0 ? ' disabled' : '';
+      var stock = x.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + x.count + ' stock</span>';
       html += '<button class="cat-item' + active + disabled + '" data-region="' + esc(x.region) + '"' + disabled + '>' +
         '<span class="cat-name">' + esc(x.region) + ' accounts</span>' + stock + '</button>';
     }
     wrap.innerHTML = html;
 
-    wrap.querySelectorAll('.cat-item').forEach(el => {
-      el.addEventListener('click', () => {
-        wrap.querySelectorAll('.cat-item').forEach(c => c.classList.remove('active'));
+    wrap.querySelectorAll('.cat-item').forEach(function(el) {
+      el.addEventListener('click', function() {
+        wrap.querySelectorAll('.cat-item').forEach(function(c) { c.classList.remove('active'); });
         el.classList.add('active');
         selectedRegion = el.dataset.region;
         selectedAge = null;
-        document.querySelectorAll('#age-cats .cat-item').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('#age-cats .cat-item').forEach(function(c) { c.classList.remove('active'); });
         updateClaimButton();
       });
     });
   }
 
   async function loadAgeBuckets() {
-    const r = await fetch('/api/age-buckets', { credentials: 'same-origin' });
-    const d = await r.json();
+    var r = await fetch('/api/age-buckets', { credentials: 'same-origin' });
+    var d = await r.json();
     if (!d.ok) return;
 
-    const wrap = document.getElementById('age-cats');
-    let html = '';
-    for (const b of d.buckets) {
-      const active = selectedAge === b.key ? ' active' : '';
-      const disabled = b.count === 0 ? ' disabled' : '';
-      const stock = b.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + b.count + ' stock</span>';
+    var wrap = document.getElementById('age-cats');
+    var html = '';
+    for (var i = 0; i < d.buckets.length; i++) {
+      var b = d.buckets[i];
+      var active = selectedAge === b.key ? ' active' : '';
+      var disabled = b.count === 0 ? ' disabled' : '';
+      var stock = b.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + b.count + ' stock</span>';
       html += '<button class="cat-item' + active + disabled + '" data-age="' + esc(b.key) + '"' + disabled + '>' +
         '<span class="cat-name">' + esc(b.label) + '</span>' + stock + '</button>';
     }
     wrap.innerHTML = html;
 
-    wrap.querySelectorAll('.cat-item').forEach(el => {
-      el.addEventListener('click', () => {
-        wrap.querySelectorAll('.cat-item').forEach(c => c.classList.remove('active'));
+    wrap.querySelectorAll('.cat-item').forEach(function(el) {
+      el.addEventListener('click', function() {
+        wrap.querySelectorAll('.cat-item').forEach(function(c) { c.classList.remove('active'); });
         el.classList.add('active');
         selectedAge = el.dataset.age;
         selectedRegion = null;
-        document.querySelectorAll('#region-cats .cat-item').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('#region-cats .cat-item').forEach(function(c) { c.classList.remove('active'); });
         updateClaimButton();
       });
     });
   }
 
   async function loadAccounts() {
-    const el = document.getElementById('accounts-list');
-    const r = await fetch('/api/accounts', { credentials: 'same-origin' });
-    const d = await r.json();
+    var el = document.getElementById('accounts-list');
+    var r = await fetch('/api/accounts', { credentials: 'same-origin' });
+    var d = await r.json();
     if (!d.ok) { el.innerHTML = '<p class="err">' + esc(d.error || 'error') + '</p>'; return; }
     if (!d.accounts.length) { el.innerHTML = '<p class="muted">No accounts yet.</p>'; return; }
-    el.innerHTML = '<table><thead><tr><th>Username</th><th>Password</th><th>Location</th><th>Age</th><th>Cookie</th><th>Claimed</th></tr></thead><tbody>'
-      + d.accounts.map((a) => {
-        const ageText = a.age != null ? (a.age + 'd') : '—';
-        return '<tr>'
-          + '<td class="mono">' + esc(a.u) + '</td>'
-          + '<td><span class="reveal reveal-pass" data-val="' + encodeURIComponent(a.p || '') + '">' + mask(a.p) + '</span></td>'
-          + '<td>' + (esc(a.c || '') + (a.ci ? ', ' + esc(a.ci) : '') || '—') + (a.ip ? '<br><span class="muted mono">' + esc(a.ip) + '</span>' : '') + '</td>'
-          + '<td class="muted">' + ageText + '</td>'
-          + '<td>' + (a.ck ? '<span class="reveal reveal-cookie" data-val="' + encodeURIComponent(a.ck) + '">Copy cookie</span>' : '<span class="muted">—</span>') + '</td>'
-          + '<td class="muted">' + new Date(a.issued_at * 1000).toLocaleString() + '</td>'
-          + '</tr>';
-      }).join('') + '</tbody></table>';
+    var html = '<table><thead><tr><th>Username</th><th>Password</th><th>Location</th><th>Age</th><th>Cookie</th><th>Claimed</th></tr></thead><tbody>';
+    for (var i = 0; i < d.accounts.length; i++) {
+      var a = d.accounts[i];
+      var ageText = a.age != null ? (a.age + 'd') : '—';
+      html += '<tr>'
+        + '<td class="mono">' + esc(a.u) + '</td>'
+        + '<td><span class="reveal reveal-pass" data-val="' + encodeURIComponent(a.p || '') + '">' + mask(a.p) + '</span></td>'
+        + '<td>' + (esc(a.c || '') + (a.ci ? ', ' + esc(a.ci) : '') || '—') + (a.ip ? '<br><span class="muted mono">' + esc(a.ip) + '</span>' : '') + '</td>'
+        + '<td class="muted">' + ageText + '</td>'
+        + '<td>' + (a.ck ? '<span class="reveal reveal-cookie" data-val="' + encodeURIComponent(a.ck) + '">Copy cookie</span>' : '<span class="muted">—</span>') + '</td>'
+        + '<td class="muted">' + new Date(a.issued_at * 1000).toLocaleString() + '</td>'
+        + '</tr>';
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
 
-    document.querySelectorAll('.reveal-pass').forEach(el => {
+    document.querySelectorAll('.reveal-pass').forEach(function(el) {
       el.addEventListener('click', function(){
-        const v = decodeURIComponent(this.dataset.val);
+        var v = decodeURIComponent(this.dataset.val);
         if (this.dataset.revealed === '1') { this.textContent = mask(v); this.dataset.revealed = '0'; }
         else { this.textContent = v; this.dataset.revealed = '1'; }
       });
     });
-    document.querySelectorAll('.reveal-cookie').forEach(el => {
+    document.querySelectorAll('.reveal-cookie').forEach(function(el) {
       el.addEventListener('click', async function(){
-        const v = decodeURIComponent(this.dataset.val);
+        var v = decodeURIComponent(this.dataset.val);
         try {
           await navigator.clipboard.writeText(v);
-          const old = this.textContent;
+          var old = this.textContent;
           this.textContent = 'Copied!';
           this.classList.add('copied');
-          setTimeout(() => { this.textContent = old; this.classList.remove('copied'); }, 1500);
-        } catch(e) { this.textContent = 'Failed'; setTimeout(() => { this.textContent = 'Copy cookie'; }, 1500); }
+          var self = this;
+          setTimeout(function() { self.textContent = old; self.classList.remove('copied'); }, 1500);
+        } catch(e) { this.textContent = 'Failed'; var self2 = this; setTimeout(function() { self2.textContent = 'Copy cookie'; }, 1500); }
       });
     });
   }
 
   function renderPreview(acc) {
     currentAccount = acc;
-    const title = document.getElementById('preview-title');
-    const body = document.getElementById('preview-body');
+    var title = document.getElementById('preview-title');
+    var body = document.getElementById('preview-body');
     if (!acc) {
       title.textContent = 'No account yet';
       body.innerHTML = '<p class="muted" style="font-size:13px">Pick a category on the left and click <b>Claim</b>.</p>';
@@ -809,47 +815,51 @@ function dashboardPage(user, keyStatus) {
     }
     title.textContent = 'Account claimed';
 
-    const ageText = acc.age != null ? (acc.age + ' days') : '—';
-    const loc = [acc.c, acc.ci].filter(Boolean).join(', ') || '—';
+    var ageText = acc.age != null ? (acc.age + ' days') : '—';
+    var loc = [acc.c, acc.ci].filter(Boolean).join(', ') || '—';
 
-    body.innerHTML = `
-      <div class="acc-preview">
-        <div class="row"><span class="k">Username</span><span class="v">${esc(acc.u)}</span></div>
-        <div class="row"><span class="k">Password</span><span class="v reveal" id="pv-pass" data-val="${encodeURIComponent(acc.p || '')}">${mask(acc.p)}</span></div>
-        <div class="row"><span class="k">Age</span><span class="v">${ageText}</span></div>
-        <div class="row"><span class="k">Location</span><span class="v">${esc(loc)}</span></div>
-        ${acc.ip ? `<div class="row"><span class="k">IP</span><span class="v">${esc(acc.ip)}</span></div>` : ''}
-        ${acc.ck ? `<div class="row"><span class="k">Cookie</span><span class="v reveal" id="pv-cookie" data-val="${encodeURIComponent(acc.ck)}">Copy cookie</span></div>` : ''}
-      </div>
-    `;
+    var html = '<div class="acc-preview">';
+    html += '<div class="row"><span class="k">Username</span><span class="v">' + esc(acc.u) + '</span></div>';
+    html += '<div class="row"><span class="k">Password</span><span class="v reveal" id="pv-pass" data-val="' + encodeURIComponent(acc.p || '') + '">' + mask(acc.p) + '</span></div>';
+    html += '<div class="row"><span class="k">Age</span><span class="v">' + ageText + '</span></div>';
+    html += '<div class="row"><span class="k">Location</span><span class="v">' + esc(loc) + '</span></div>';
+    if (acc.ip) {
+      html += '<div class="row"><span class="k">IP</span><span class="v">' + esc(acc.ip) + '</span></div>';
+    }
+    if (acc.ck) {
+      html += '<div class="row"><span class="k">Cookie</span><span class="v reveal" id="pv-cookie" data-val="' + encodeURIComponent(acc.ck) + '">Copy cookie</span></div>';
+    }
+    html += '</div>';
+    body.innerHTML = html;
 
-    const passEl = document.getElementById('pv-pass');
+    var passEl = document.getElementById('pv-pass');
     if (passEl) passEl.addEventListener('click', function(){
-      const v = decodeURIComponent(this.dataset.val);
+      var v = decodeURIComponent(this.dataset.val);
       if (this.dataset.revealed === '1') { this.textContent = mask(v); this.dataset.revealed = '0'; }
       else { this.textContent = v; this.dataset.revealed = '1'; }
     });
 
-    const ckEl = document.getElementById('pv-cookie');
+    var ckEl = document.getElementById('pv-cookie');
     if (ckEl) ckEl.addEventListener('click', async function(){
-      const v = decodeURIComponent(this.dataset.val);
+      var v = decodeURIComponent(this.dataset.val);
+      var self = this;
       try {
         await navigator.clipboard.writeText(v);
-        this.textContent = 'Copied!';
-        this.classList.add('copied');
-        setTimeout(() => { this.textContent = 'Copy cookie'; this.classList.remove('copied'); }, 1500);
-      } catch(e) { this.textContent = 'Failed'; setTimeout(() => { this.textContent = 'Copy cookie'; }, 1500); }
+        self.textContent = 'Copied!';
+        self.classList.add('copied');
+        setTimeout(function() { self.textContent = 'Copy cookie'; self.classList.remove('copied'); }, 1500);
+      } catch(e) { self.textContent = 'Failed'; setTimeout(function() { self.textContent = 'Copy cookie'; }, 1500); }
     });
   }
 
   function startCooldown(sec) {
-    const btn = document.getElementById('btn-claim');
-    let left = sec;
+    var btn = document.getElementById('btn-claim');
+    var left = sec;
     if (cooldownTimer) clearInterval(cooldownTimer);
     btn.dataset.cooldownText = 'Wait ' + left + 's';
     btn.textContent = btn.dataset.cooldownText;
     btn.disabled = true;
-    cooldownTimer = setInterval(() => {
+    cooldownTimer = setInterval(function() {
       left -= 1;
       if (left <= 0) {
         clearInterval(cooldownTimer); cooldownTimer = null;
@@ -862,13 +872,13 @@ function dashboardPage(user, keyStatus) {
     }, 1000);
   }
 
-  document.getElementById('btn-claim').addEventListener('click', async () => {
-    const btn = document.getElementById('btn-claim');
-    const out = document.getElementById('claim-out');
+  document.getElementById('btn-claim').addEventListener('click', async function() {
+    var btn = document.getElementById('btn-claim');
+    var out = document.getElementById('claim-out');
     out.className = 'note'; out.textContent = 'Claiming…';
     btn.disabled = true;
     try {
-      const r = await fetch('/api/claim', {
+      var r = await fetch('/api/claim', {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -876,7 +886,7 @@ function dashboardPage(user, keyStatus) {
           age: selectedAge || null,
         })
       });
-      const d = await r.json();
+      var d = await r.json();
       if (d.ok) {
         out.className = 'note ok'; out.textContent = '';
         renderPreview(d.account);
@@ -907,7 +917,7 @@ function dashboardPage(user, keyStatus) {
     } catch(e) { out.className = 'note err'; out.textContent = String(e); updateClaimButton(); }
   });
 
-  setInterval(() => {
+  setInterval(function() {
     if (resetInSec > 0) resetInSec -= 1;
     document.getElementById('reset-in').textContent = fmtHMS(Math.max(0, resetInSec));
     if (limitUsed >= limitMax) document.getElementById('limit-time').textContent = fmtHMS(Math.max(0, resetInSec)) + ' left';
