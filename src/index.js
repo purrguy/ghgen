@@ -1,7 +1,6 @@
 /**
  * ghgen v3 — username/password + email code auth
  * Env: POOL_KEY, UPLOAD_SECRET, RESEND_API_KEY
- recommit
  */
 
 const CORS = {
@@ -261,7 +260,6 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .badge.ok{background:rgba(76,175,122,.12);color:var(--ok);border-color:rgba(76,175,122,.3)}
 .badge.err{background:rgba(232,93,93,.12);color:var(--bad);border-color:rgba(232,93,93,.3)}
 .note{color:var(--muted);font-size:12px;margin-top:14px}
-.why{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;font-style:italic}
 .reveal{background:#0a0a0c;border:1px dashed var(--line);padding:6px 10px;border-radius:6px;cursor:pointer;display:inline-block;color:var(--muted);font-size:12px;user-select:none}
 .reveal:hover{border-color:var(--accent);color:var(--accent)}
 .reveal.copied{border-color:var(--ok);color:var(--ok)}
@@ -272,14 +270,15 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .reset-bar b{color:var(--text);font-family:ui-monospace,monospace}
 .counter{font-size:28px;font-weight:700;color:var(--accent);font-family:ui-monospace,monospace}
 .counter span{color:var(--muted);font-size:15px;font-weight:500}
-
-/* NEW: auth tabs */
 .auth-tabs{display:flex;gap:4px;margin-bottom:20px;background:var(--bg2);padding:4px;border-radius:10px;border:1px solid var(--line)}
 .auth-tabs button{flex:1;background:transparent;border:none;padding:10px;font-size:13px;font-weight:600;color:var(--muted);border-radius:7px;cursor:pointer}
 .auth-tabs button.active{background:var(--card);color:var(--text)}
 .auth-tabs button:hover{color:var(--text)}
-.form-row{display:flex;gap:12px}
-.form-row > *{flex:1}
+.region-hint{margin-top:8px;padding:10px 12px;background:#0e0e11;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--muted);line-height:1.7;max-height:150px;overflow-y:auto}
+.region-hint .r{display:flex;justify-content:space-between;padding:2px 0}
+.region-hint .r b{color:var(--text);font-weight:500}
+.link-btn{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:0;text-decoration:underline}
+.link-btn:hover{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -320,6 +319,9 @@ function authPage(msg = "") {
         <label>Password</label>
         <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••"/>
         <button class="primary" id="btn-login" style="width:100%;margin-top:18px">Continue</button>
+        <div style="text-align:center;margin-top:14px">
+          <button class="link-btn" id="link-forgot">Forgot password?</button>
+        </div>
         <p class="note" id="login-out"></p>
       </div>
 
@@ -338,44 +340,103 @@ function authPage(msg = "") {
         <button class="primary" id="btn-register" style="width:100%;margin-top:18px">Continue</button>
         <p class="note" id="register-out"></p>
       </div>
-    </div>
 
-    <!-- VERIFY (показывается после login-start/register-start) -->
-    <div id="pane-verify" class="card" style="display:none">
-      <p class="muted" style="margin-bottom:10px">Code sent to <b id="verify-email">your email</b>. Expires in 10 min.</p>
-      <label>Verification code</label>
-      <input id="verify-code" maxlength="6" inputmode="numeric" placeholder="123456" autocomplete="one-time-code"/>
-      <button class="primary" id="btn-verify" style="width:100%;margin-top:16px">Verify</button>
-      <p class="note" id="verify-out"></p>
+      <!-- FORGOT -->
+      <div id="pane-forgot" style="display:none">
+        <p class="muted" style="margin-bottom:14px;font-size:13px">
+          Enter your username and we'll send a reset code to the email on file.
+        </p>
+        <label>Username</label>
+        <input id="forgot-user" placeholder="your_ghgen_username" autocomplete="username"/>
+        <button class="primary" id="btn-forgot" style="width:100%;margin-top:18px">Send reset code</button>
+        <div style="text-align:center;margin-top:14px">
+          <button class="link-btn" id="link-back-login">← Back to login</button>
+        </div>
+        <p class="note" id="forgot-out"></p>
+      </div>
+
+      <!-- VERIFY (login / register / forgot / legacy) -->
+      <div id="pane-verify" style="display:none">
+        <p class="muted" style="margin-bottom:10px">Code sent to <b id="verify-email">your email</b>. Expires in 10 min.</p>
+        <label>Verification code</label>
+        <input id="verify-code" maxlength="6" inputmode="numeric" placeholder="123456" autocomplete="one-time-code"/>
+        <div id="extra-pass-wrap" style="display:none">
+          <p class="muted" style="margin:14px 0 6px;font-size:12px">
+            ⚠ <span id="extra-pass-hint">Set a new password</span>
+          </p>
+          <label>New password</label>
+          <input id="extra-pass" type="password" placeholder="min 8 chars" autocomplete="new-password"/>
+        </div>
+        <button class="primary" id="btn-verify" style="width:100%;margin-top:16px">Verify</button>
+        <div style="text-align:center;margin-top:14px">
+          <button class="link-btn" id="link-back-verify">← Back</button>
+        </div>
+        <p class="note" id="verify-out"></p>
+      </div>
     </div>
   </div>
 
   <script>
+  // mode: 'login' | 'register' | 'forgot'
   let mode = 'login';
+  // verifyMode: 'login' | 'register' | 'forgot' | 'legacy'
+  let verifyMode = 'login';
+  let lastUsername = '';
 
-  document.getElementById('tab-login').addEventListener('click', () => {
-    mode = 'login';
-    document.getElementById('tab-login').classList.add('active');
-    document.getElementById('tab-register').classList.remove('active');
-    document.getElementById('pane-login').style.display = 'block';
-    document.getElementById('pane-register').style.display = 'none';
-  });
-  document.getElementById('tab-register').addEventListener('click', () => {
-    mode = 'register';
-    document.getElementById('tab-register').classList.add('active');
-    document.getElementById('tab-login').classList.remove('active');
-    document.getElementById('pane-register').style.display = 'block';
-    document.getElementById('pane-login').style.display = 'none';
-  });
+  function setMode(m) {
+    mode = m;
+    document.getElementById('tab-login').classList.toggle('active', m === 'login');
+    document.getElementById('tab-register').classList.toggle('active', m === 'register');
+    document.getElementById('pane-login').style.display = m === 'login' ? 'block' : 'none';
+    document.getElementById('pane-register').style.display = m === 'register' ? 'block' : 'none';
+    document.getElementById('pane-forgot').style.display = 'none';
+  }
 
-  function showVerify(email) {
-    document.querySelector('.auth-tabs').parentElement.style.display = 'none';
+  function showForgot() {
+    document.querySelector('.auth-tabs').style.display = 'none';
     document.getElementById('pane-login').style.display = 'none';
     document.getElementById('pane-register').style.display = 'none';
+    document.getElementById('pane-forgot').style.display = 'block';
+    document.getElementById('forgot-user').focus();
+  }
+
+  function backFromVerify() {
+    document.getElementById('pane-verify').style.display = 'none';
+    document.querySelector('.auth-tabs').style.display = 'flex';
+    setMode(mode === 'forgot' ? 'login' : mode);
+  }
+
+  function showVerify(email, vm) {
+    verifyMode = vm || 'login';
     document.getElementById('pane-verify').style.display = 'block';
+    document.getElementById('pane-login').style.display = 'none';
+    document.getElementById('pane-register').style.display = 'none';
+    document.getElementById('pane-forgot').style.display = 'none';
     document.getElementById('verify-email').textContent = email;
     document.getElementById('verify-code').focus();
+    document.getElementById('verify-out').textContent = '';
+
+    const needsPass = (vm === 'forgot' || vm === 'legacy');
+    const wrap = document.getElementById('extra-pass-wrap');
+    wrap.style.display = needsPass ? 'block' : 'none';
+    if (needsPass) {
+      document.getElementById('extra-pass-hint').textContent =
+        vm === 'legacy' ? 'Your account has no password yet. Set one below.' : 'Enter a new password.';
+      document.getElementById('extra-pass').value = '';
+    } else {
+      document.getElementById('extra-pass').value = '';
+    }
   }
+
+  document.getElementById('tab-login').addEventListener('click', () => setMode('login'));
+  document.getElementById('tab-register').addEventListener('click', () => setMode('register'));
+  document.getElementById('link-forgot').addEventListener('click', showForgot);
+  document.getElementById('link-back-login').addEventListener('click', () => {
+    document.querySelector('.auth-tabs').style.display = 'flex';
+    document.getElementById('pane-forgot').style.display = 'none';
+    setMode('login');
+  });
+  document.getElementById('link-back-verify').addEventListener('click', backFromVerify);
 
   async function post(path, body) {
     const r = await fetch(path, {
@@ -387,17 +448,20 @@ function authPage(msg = "") {
     return await r.json();
   }
 
+  // LOGIN
   document.getElementById('btn-login').addEventListener('click', async () => {
     const out = document.getElementById('login-out');
     out.className = 'note'; out.textContent = 'Checking…';
     const username = document.getElementById('login-user').value.trim();
     const password = document.getElementById('login-pass').value;
-    if (!username || !password) { out.className = 'note err'; out.textContent = 'Enter username and password'; return; }
+    if (!username) { out.className = 'note err'; out.textContent = 'Enter username'; return; }
     const d = await post('/api/auth/login-start', { username, password });
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
-    showVerify(d.email_masked);
+    lastUsername = username;
+    showVerify(d.email_masked, d.legacy ? 'legacy' : 'login');
   });
 
+  // REGISTER
   document.getElementById('btn-register').addEventListener('click', async () => {
     const out = document.getElementById('register-out');
     out.className = 'note'; out.textContent = 'Creating…';
@@ -413,20 +477,57 @@ function authPage(msg = "") {
     }
     const d = await post('/api/auth/register-start', payload);
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
-    showVerify(d.email_masked);
+    lastUsername = payload.username;
+    showVerify(d.email_masked, 'register');
   });
 
+  // FORGOT
+  document.getElementById('btn-forgot').addEventListener('click', async () => {
+    const out = document.getElementById('forgot-out');
+    out.className = 'note'; out.textContent = 'Sending…';
+    const username = document.getElementById('forgot-user').value.trim();
+    if (!username) { out.className = 'note err'; out.textContent = 'Enter username'; return; }
+    const d = await post('/api/auth/forgot-start', { username });
+    if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
+    lastUsername = username;
+    showVerify(d.email_masked, 'forgot');
+  });
+
+  // VERIFY
   document.getElementById('btn-verify').addEventListener('click', async () => {
     const out = document.getElementById('verify-out');
     out.className = 'note'; out.textContent = 'Verifying…';
     const code = document.getElementById('verify-code').value.trim();
-    const d = await post('/api/auth/verify', { code });
+    if (!/^\\d{6}$/.test(code)) { out.className = 'note err'; out.textContent = 'Enter 6-digit code'; return; }
+
+    let endpoint = '/api/auth/verify';
+    let payload = { code };
+
+    if (verifyMode === 'forgot') {
+      const password = document.getElementById('extra-pass').value;
+      if (password.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
+      endpoint = '/api/auth/forgot-reset';
+      payload = { code, password };
+    } else if (verifyMode === 'legacy') {
+      const password = document.getElementById('extra-pass').value;
+      if (password.length < 8) { out.className = 'note err'; out.textContent = 'Password min 8 chars'; return; }
+      endpoint = '/api/auth/legacy-setup';
+      payload = { code, password };
+    }
+
+    const d = await post(endpoint, payload);
     if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
     window.location.href = '/dashboard';
   });
 
   document.getElementById('verify-code').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('btn-verify').click();
+  });
+  document.getElementById('forgot-user').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-forgot').click();
+  });
+  document.getElementById('login-pass').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-login').click();
   });
   </script>
   `);
@@ -526,7 +627,7 @@ function dashboardPage(user, keyStatus) {
     if (!d.ok) { el.innerHTML = '<p class="err">' + (d.error || 'error') + '</p>'; return; }
     if (!d.accounts.length) { el.innerHTML = '<p class="muted">No accounts yet.</p>'; return; }
     el.innerHTML = '<table><thead><tr><th>Username</th><th>Password</th><th>Location</th><th>Cookie</th><th>Claimed</th></tr></thead><tbody>'
-      + d.accounts.map((a, i) => '<tr>'
+      + d.accounts.map((a) => '<tr>'
         + '<td class="mono">' + a.u + '</td>'
         + '<td><span class="reveal reveal-pass" data-val="' + encodeURIComponent(a.p || '') + '">' + mask(a.p) + '</span></td>'
         + '<td>' + ((a.c || '') + (a.ci ? ', ' + a.ci : '') || '—') + (a.ip ? '<br><span class="muted mono">' + a.ip + '</span>' : '') + '</td>'
@@ -592,7 +693,7 @@ function dashboardPage(user, keyStatus) {
       } else if (d.error === 'cooldown') { out.className = 'note err'; out.textContent = d.message || 'Cooldown'; startCooldown(d.wait_seconds || cooldownSec); }
       else if (d.error === 'daily_limit') { out.className = 'note err'; out.textContent = 'Daily limit reached'; resetInSec = d.reset_in || 0; updateLimitBanner(); }
       else if (d.error === 'pool_empty') { out.className = 'note err'; out.textContent = 'No accounts in this region. Try Random.'; btn.disabled = false; }
-      else if (d.error?.startsWith('key_')) { out.className = 'note err'; out.textContent = 'Your key is ' + d.error.replace('key_','') + '.'; }
+      else if (d.error && d.error.startsWith('key_')) { out.className = 'note err'; out.textContent = 'Your key is ' + d.error.replace('key_','') + '.'; }
       else { out.className = 'note err'; out.textContent = d.error || 'error'; btn.disabled = false; }
     } catch(e) { out.className = 'note err'; out.textContent = String(e); btn.disabled = false; }
   });
@@ -614,6 +715,7 @@ function docsPage() {
   <p class="sub">How GHGen works.</p>
   <div class="card"><h2>Register</h2><p class="muted">Pick a username, email, password and your Roblox username. We'll send a code to your email.</p></div>
   <div class="card"><h2>Login</h2><p class="muted">Enter username + password. We'll send a fresh code to your registered email every time.</p></div>
+  <div class="card"><h2>Forgot password</h2><p class="muted">Enter your username — we'll send a reset code to your email.</p></div>
   <div class="card"><h2>Claim</h2><p class="muted">Pick a region (or Random) and click Claim. Server checks your daily limit and cooldown.</p></div>
   <div class="card"><h2>Limits</h2><p class="muted">Day: 3/20s · Week: 10/30s · Month: 30/60s · Year: 40/70s. 24h window starts on first claim.</p></div>
   `);
@@ -639,20 +741,38 @@ async function handleLoginStart(request, env) {
   try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
   const username = String(body.username || "").trim();
   const password = String(body.password || "");
-  if (!validUsername(username) || !password) return json({ ok: false, error: "invalid_input" }, 400);
+  if (!validUsername(username)) return json({ ok: false, error: "invalid_username" }, 400);
 
   const user = await env.DB.prepare(
     `SELECT id, email, password_hash, salt FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
   ).bind(username).first();
   if (!user) return json({ ok: false, error: "invalid_credentials" }, 401);
-  if (!user.password_hash || !user.salt) return json({ ok: false, error: "no_password_set" }, 401);
   if (!user.email) return json({ ok: false, error: "no_email_on_account" }, 401);
+
+  const ts = now();
+
+  // LEGACY: без пароля — пусть установит через email-код
+  if (!user.password_hash || !user.salt) {
+    const code = randomCode6();
+    await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(user.email).run();
+    const ins = await env.DB.prepare(
+      `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'legacy_setup', ?, ?) RETURNING id`
+    ).bind(user.email, code, ts, ts + CODE_TTL).first();
+
+    const sent = await sendEmail(env, user.email, code);
+    if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
+
+    return json({ ok: true, legacy: true, email_masked: maskEmail(user.email) }, 200, {
+      "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
+    });
+  }
+
+  if (!password) return json({ ok: false, error: "password_required" }, 400);
 
   const ok = await verifyPassword(password, user.password_hash, user.salt);
   if (!ok) return json({ ok: false, error: "invalid_credentials" }, 401);
 
   const code = randomCode6();
-  const ts = now();
   await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(user.email).run();
   const ins = await env.DB.prepare(
     `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'login', ?, ?) RETURNING id`
@@ -680,12 +800,10 @@ async function handleRegisterStart(request, env) {
   if (password.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
   if (!validRobloxUsername(roblox_username)) return json({ ok: false, error: "invalid_roblox_username" }, 400);
 
-  // key optional — если задан, проверим формат
   if (key && !/^GH-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(key) && !key.startsWith("GH-PAID-")) {
     return json({ ok: false, error: "invalid_key_format" }, 400);
   }
 
-  // Проверки уникальности (кроме ghost-аккаунтов email_verified=0)
   const existing_username = await env.DB.prepare(
     `SELECT id, email_verified FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
   ).bind(username).first();
@@ -707,7 +825,6 @@ async function handleRegisterStart(request, env) {
     return json({ ok: false, error: "roblox_username_taken" }, 409);
   }
 
-  // Проверка key (если задан)
   let keyUser = null;
   if (key) {
     const ks = await loadKeyStatus(env, key);
@@ -721,7 +838,6 @@ async function handleRegisterStart(request, env) {
   const { hash, salt } = await hashPassword(password);
   const ts = now();
 
-  // Если такой username/email уже есть, но не верифицирован — перезаписываем
   if (existing_username) {
     await env.DB.prepare(
       `UPDATE ghgen_users SET email = ?, password_hash = ?, salt = ?, roblox_username = ?, key = ?, created_at = ? WHERE id = ?`
@@ -774,6 +890,113 @@ async function handleVerify(request, env) {
   const sid = await createSession(env, user.id, getIP(request));
   await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
     .bind(user.id, v.purpose === "register" ? "register" : "login", getIP(request), now()).run();
+
+  return json({ ok: true }, 200, {
+    "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
+    "Set-Cookie-2": clearCookieHeader("GHGEN_PENDING")
+  });
+}
+
+async function handleLegacySetup(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  const code = String(body.code || "").trim();
+  const password = String(body.password || "");
+  if (!/^\d{6}$/.test(code)) return json({ ok: false, error: "invalid_code" }, 400);
+  if (password.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
+
+  const pendingId = getCookie(request, "GHGEN_PENDING");
+  if (!pendingId) return json({ ok: false, error: "no_pending_verification" }, 400);
+
+  const v = await env.DB.prepare(
+    `SELECT * FROM ghgen_verifications WHERE id = ? AND used = 0 AND purpose = 'legacy_setup' LIMIT 1`
+  ).bind(pendingId).first();
+  if (!v) return json({ ok: false, error: "no_pending_verification" }, 400);
+  if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
+  if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
+
+  const user = await env.DB.prepare(
+    `SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`
+  ).bind(v.email).first();
+  if (!user) return json({ ok: false, error: "user_not_found" }, 400);
+
+  const { hash, salt } = await hashPassword(password);
+  await env.DB.prepare(
+    `UPDATE ghgen_users SET password_hash = ?, salt = ?, email_verified = 1, last_login = ? WHERE id = ?`
+  ).bind(hash, salt, now(), user.id).run();
+
+  await env.DB.prepare(`UPDATE ghgen_verifications SET used = 1 WHERE id = ?`).bind(v.id).run();
+
+  const sid = await createSession(env, user.id, getIP(request));
+  await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
+    .bind(user.id, "legacy_password_set", getIP(request), now()).run();
+
+  return json({ ok: true }, 200, {
+    "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
+    "Set-Cookie-2": clearCookieHeader("GHGEN_PENDING")
+  });
+}
+
+async function handleForgotStart(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  const username = String(body.username || "").trim();
+  if (!validUsername(username)) return json({ ok: false, error: "invalid_username" }, 400);
+
+  const user = await env.DB.prepare(
+    `SELECT id, email FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
+  ).bind(username).first();
+  if (!user) return json({ ok: false, error: "invalid_username" }, 401);
+  if (!user.email) return json({ ok: false, error: "no_email_on_account" }, 401);
+
+  const code = randomCode6();
+  const ts = now();
+  await env.DB.prepare(`DELETE FROM ghgen_verifications WHERE email = ? AND used = 0`).bind(user.email).run();
+  const ins = await env.DB.prepare(
+    `INSERT INTO ghgen_verifications (email, code, purpose, created_at, expires_at) VALUES (?, ?, 'forgot', ?, ?) RETURNING id`
+  ).bind(user.email, code, ts, ts + CODE_TTL).first();
+
+  const sent = await sendEmail(env, user.email, code);
+  if (!sent.ok) return json({ ok: false, error: "email_send_failed", message: sent.error }, 500);
+
+  return json({ ok: true, email_masked: maskEmail(user.email) }, 200, {
+    "Set-Cookie": cookieHeader("GHGEN_PENDING", String(ins.id), CODE_TTL)
+  });
+}
+
+async function handleForgotReset(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  const code = String(body.code || "").trim();
+  const password = String(body.password || "");
+  if (!/^\d{6}$/.test(code)) return json({ ok: false, error: "invalid_code" }, 400);
+  if (password.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
+
+  const pendingId = getCookie(request, "GHGEN_PENDING");
+  if (!pendingId) return json({ ok: false, error: "no_pending_verification" }, 400);
+
+  const v = await env.DB.prepare(
+    `SELECT * FROM ghgen_verifications WHERE id = ? AND used = 0 AND purpose = 'forgot' LIMIT 1`
+  ).bind(pendingId).first();
+  if (!v) return json({ ok: false, error: "no_pending_verification" }, 400);
+  if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
+  if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
+
+  const user = await env.DB.prepare(
+    `SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`
+  ).bind(v.email).first();
+  if (!user) return json({ ok: false, error: "user_not_found" }, 400);
+
+  const { hash, salt } = await hashPassword(password);
+  await env.DB.prepare(
+    `UPDATE ghgen_users SET password_hash = ?, salt = ?, last_login = ? WHERE id = ?`
+  ).bind(hash, salt, now(), user.id).run();
+
+  await env.DB.prepare(`UPDATE ghgen_verifications SET used = 1 WHERE id = ?`).bind(v.id).run();
+
+  const sid = await createSession(env, user.id, getIP(request));
+  await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
+    .bind(user.id, "password_reset", getIP(request), now()).run();
 
   return json({ ok: true }, 200, {
     "Set-Cookie": cookieHeader("GHGEN_SESSION", sid, SESSION_TTL),
@@ -901,7 +1124,7 @@ async function handleClaim(env, request) {
 }
 
 // ============================================================
-//  POOL ADMIN (unchanged)
+//  POOL ADMIN
 // ============================================================
 async function handlePoolUpload(request, env) {
   const secret = request.headers.get("X-Upload-Secret");
@@ -925,8 +1148,8 @@ async function handlePoolUpload(request, env) {
       ci: a.ci ? String(a.ci).trim() : null,
       ip: a.ip ? String(a.ip).trim() : null,
       ck: a.ck ? String(a.ck) : null,
-      age: a.age != null ? Number(a.age) : null,       // NEW: возраст в днях
-      created: a.created ? String(a.created).trim() : null, // NEW: ISO дата
+      age: a.age != null ? Number(a.age) : null,
+      created: a.created ? String(a.created).trim() : null,
     };
     const region = clean.c || null;
     try {
@@ -966,20 +1189,23 @@ export default {
       if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
 
       // auth
-      if (request.method === "POST" && path === "/api/auth/login-start") return await handleLoginStart(request, env);
+      if (request.method === "POST" && path === "/api/auth/login-start")    return await handleLoginStart(request, env);
       if (request.method === "POST" && path === "/api/auth/register-start") return await handleRegisterStart(request, env);
-      if (request.method === "POST" && path === "/api/auth/verify") return await handleVerify(request, env);
-      if (request.method === "GET" && path === "/logout") return await handleLogout(env, request);
+      if (request.method === "POST" && path === "/api/auth/verify")         return await handleVerify(request, env);
+      if (request.method === "POST" && path === "/api/auth/legacy-setup")   return await handleLegacySetup(request, env);
+      if (request.method === "POST" && path === "/api/auth/forgot-start")   return await handleForgotStart(request, env);
+      if (request.method === "POST" && path === "/api/auth/forgot-reset")   return await handleForgotReset(request, env);
+      if (request.method === "GET"  && path === "/logout")                  return await handleLogout(env, request);
 
       // user
-      if (request.method === "GET" && path === "/api/state") return await handleState(env, request);
-      if (request.method === "GET" && path === "/api/regions") return await handleRegions(env, request);
-      if (request.method === "GET" && path === "/api/accounts") return await handleAccounts(env, request);
-      if (request.method === "POST" && path === "/api/claim") return await handleClaim(env, request);
+      if (request.method === "GET"  && path === "/api/state")    return await handleState(env, request);
+      if (request.method === "GET"  && path === "/api/regions")  return await handleRegions(env, request);
+      if (request.method === "GET"  && path === "/api/accounts") return await handleAccounts(env, request);
+      if (request.method === "POST" && path === "/api/claim")    return await handleClaim(env, request);
 
       // pool admin
       if (request.method === "POST" && path === "/api/pool/upload") return await handlePoolUpload(request, env);
-      if (request.method === "GET" && path === "/api/pool/stats") return await handlePoolStats(request, env);
+      if (request.method === "GET"  && path === "/api/pool/stats")  return await handlePoolStats(request, env);
 
       // pages
       const user = await requireUser(env, request);
