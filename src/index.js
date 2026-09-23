@@ -1477,4 +1477,50 @@ export default {
       // static
       if (request.method === "GET" && path === "/static/style.css")     return css(STYLE_CSS);
       if (request.method === "GET" && path === "/static/auth.js")       return js(AUTH_JS);
-      if (request.method === "GET" && path === "/static/dashboard
+      if (request.method === "GET" && path === "/static/dashboard.js")  return js(DASHBOARD_JS);
+
+      // auth
+      if (request.method === "POST" && path === "/api/auth/login-start")    return await handleLoginStart(request, env);
+      if (request.method === "POST" && path === "/api/auth/register-start") return await handleRegisterStart(request, env);
+      if (request.method === "POST" && path === "/api/auth/verify")         return await handleVerify(request, env);
+      if (request.method === "POST" && path === "/api/auth/legacy-setup")   return await handleLegacySetup(request, env);
+      if (request.method === "POST" && path === "/api/auth/forgot-start")   return await handleForgotStart(request, env);
+      if (request.method === "POST" && path === "/api/auth/forgot-reset")   return await handleForgotReset(request, env);
+      if (request.method === "GET"  && path === "/logout")                  return await handleLogout(env, request);
+
+      // user
+      if (request.method === "GET"  && path === "/api/state")        return await handleState(env, request);
+      if (request.method === "GET"  && path === "/api/regions")      return await handleRegions(env, request);
+      if (request.method === "GET"  && path === "/api/age-buckets")  return await handleAgeBuckets(env, request);
+      if (request.method === "GET"  && path === "/api/accounts")     return await handleAccounts(env, request);
+      if (request.method === "POST" && path === "/api/claim")        return await handleClaim(env, request);
+
+      // pool admin
+      if (request.method === "POST" && path === "/api/pool/upload") return await handlePoolUpload(request, env);
+      if (request.method === "GET"  && path === "/api/pool/stats")  return await handlePoolStats(request, env);
+
+      // pages
+      const user = await requireUser(env, request);
+      if (request.method === "GET" && path === "/") {
+        if (user) return html("", 302, { "Location": "/dashboard" });
+        return html(authPage());
+      }
+      if (request.method === "GET" && path === "/dashboard") {
+        if (!user) return html("", 302, { "Location": "/" });
+        const ks = await loadKeyStatus(env, user.key);
+        return html(dashboardPage(user, ks));
+      }
+      if (request.method === "GET" && path === "/docs") return html(docsPage());
+
+      return html(pageShell("404", `<h1>404</h1><p class="sub">Not found.</p>`), 404);
+    } catch (e) {
+      console.error("ghgen error:", e);
+      return json({
+        ok: false,
+        error: "internal",
+        message: String(e?.message || e),
+        stack: String(e?.stack || "").slice(0, 500)
+      }, 500);
+    }
+  },
+};
