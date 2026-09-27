@@ -421,6 +421,35 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .bulk-row{display:flex;justify-content:space-between;gap:10px;padding:7px 2px;border-bottom:1px dashed rgba(255,255,255,.06);font-size:13px}
 .bulk-row:last-child{border-bottom:none}
 @media(max-width:760px){.side-nav{flex-direction:row;overflow-x:auto;padding-bottom:6px}.side-nav button{white-space:nowrap}.side-user{display:none}.main{padding:20px 16px}}
+body{background:radial-gradient(900px 320px at 70% -80px,rgba(201,162,39,.09),transparent 70%),var(--bg)}
+.pane{display:none}.pane.active{display:block;animation:rise .28s ease}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}}
+.hero{position:relative;overflow:hidden;background:linear-gradient(135deg,#1c1a10 0%,var(--card) 55%);border:1px solid var(--accent-line);border-radius:16px;padding:26px 26px 22px;margin:4px 0 18px}
+.hero::after{content:'';position:absolute;right:-70px;top:-70px;width:230px;height:230px;border-radius:50%;background:radial-gradient(circle,rgba(201,162,39,.22),transparent 70%)}
+.hero .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--accent);text-transform:uppercase}
+.hero .big{font-size:clamp(44px,7vw,68px);font-weight:800;letter-spacing:-.03em;line-height:1;margin:6px 0 2px}
+.hero .big small{font-size:.42em;font-weight:600;color:var(--muted);letter-spacing:0}
+.hero .meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:var(--muted)}
+.hero .meta b{color:var(--text);font-family:ui-monospace,monospace}
+.hero .bar{height:6px;border-radius:99px;background:#0a0a0c;margin-top:16px;overflow:hidden}
+.hero .bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent-line),var(--accent));transition:width .5s ease}
+.meter{display:block;width:110px;height:5px;border-radius:99px;background:#0a0a0c;overflow:hidden;flex:none}
+.meter i{display:block;height:100%;background:var(--accent);border-radius:99px;opacity:.85}
+.cat-stock{display:flex;align-items:center;gap:8px}
+.skel{border-radius:8px;background:linear-gradient(90deg,var(--bg2) 25%,#1e1e23 50%,var(--bg2) 75%);background-size:200% 100%;animation:shimmer 1.2s infinite}
+@keyframes shimmer{to{background-position:-200% 0}}
+.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:900px){.set-grid{grid-template-columns:1fr}}
+.set-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px dashed rgba(255,255,255,.06)}
+.set-row:last-child{border-bottom:none}
+.set-row .lab{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.sess{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed rgba(255,255,255,.06);font-size:13px}
+.sess:last-child{border-bottom:none}
+.danger{border-color:rgba(232,93,93,.4)!important}
+.btn-danger{background:transparent!important;border:1px solid rgba(232,93,93,.5)!important;color:#f8b0b0!important}
+.btn-danger:hover{border-color:var(--bad)!important;color:var(--bad)!important}
+.claim-big{width:100%;padding:16px!important;font-size:15px!important;font-weight:800!important;letter-spacing:.02em}
+.claim-big:not(:disabled){box-shadow:0 6px 24px rgba(201,162,39,.25)}
 `;
 
 // ============================================================
@@ -433,6 +462,7 @@ function pageShell(title, content, activeTab) {
   nav += `<button data-tab="history"${activeTab === 'history' ? ' class="active"' : ''}><span>📜</span> History</button>`;
   nav += `<button data-tab="bulk"${activeTab === 'bulk' ? ' class="active"' : ''}><span>📦</span> Bulk</button>`;
   nav += `<button data-tab="premium"${activeTab === 'premium' ? ' class="active"' : ''}><span>⭐</span> Premium</button>`;
+  nav += `<button data-tab="settings"${activeTab === 'settings' ? ' class="active"' : ''}><span>⚙️</span> Settings</button>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -545,16 +575,27 @@ function dashboardPage(user, keyStatus) {
     You reached your daily limit!<span class="time" id="limit-time">00:00:00 left</span>
   </div>
 
+  <div class="hero">
+    <div class="kicker">Daily quota</div>
+    <div class="big"><span id="hero-used">–</span><small> / <span id="hero-max">–</span></small></div>
+    <div class="meta">
+      <span>Resets in <b id="hero-reset">–</b></span>
+      <span>Cooldown <b id="hero-cool">–</b></span>
+      <span>Plan <b id="hero-plan">–</b></span>
+    </div>
+    <div class="bar"><i id="hero-bar" style="width:0%"></i></div>
+  </div>
+
   <div class="pane active" id="pane-free">
     <div class="grid">
       <div>
         <div class="cat-section">
           <div class="cat-header">Accounts by Location</div>
-          <div id="region-cats"><p class="muted" style="padding:8px 4px">Loading…</p></div>
+          <div id="region-cats"><div class="skel" style="height:42px;margin-bottom:6px"></div><div class="skel" style="height:42px;margin-bottom:6px"></div><div class="skel" style="height:42px"></div></div>
         </div>
         <div class="cat-section">
           <div class="cat-header">Accounts by Age</div>
-          <div id="age-cats"><p class="muted" style="padding:8px 4px">Loading…</p></div>
+          <div id="age-cats"><div class="skel" style="height:42px;margin-bottom:6px"></div><div class="skel" style="height:42px"></div></div>
         </div>
       </div>
       <div>
@@ -563,7 +604,7 @@ function dashboardPage(user, keyStatus) {
           <div id="preview-body">
             <p class="muted" style="font-size:13px">Pick a category on the left and click <b>Claim</b>.</p>
           </div>
-          <button class="primary" id="btn-claim" style="margin-top:16px;width:100%;padding:14px;font-size:14px;font-weight:700" disabled>Pick a category</button>
+          <button class="primary claim-big" id="btn-claim" style="margin-top:16px" disabled>Pick a category</button>
           <p class="note" id="claim-out" style="min-height:16px"></p>
         </div>
         <div class="card">
@@ -612,6 +653,39 @@ function dashboardPage(user, keyStatus) {
     <div class="card">
       <h2>Plans</h2>
       <p class="muted">day · 3 claims &nbsp;&nbsp; week · 10 &nbsp;&nbsp; month · 30 &nbsp;&nbsp; year · 40<br>Contact staff on the main site to upgrade your key.</p>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-settings">
+    <h1>Settings</h1>
+    <p class="sub">Your account and security.</p>
+    <div class="set-grid">
+      <div class="card">
+        <h2>Account</h2>
+        <div class="set-row"><span class="lab">Username</span><span class="val mono" id="set-user">—</span></div>
+        <div class="set-row"><span class="lab">Email</span><span class="val mono" id="set-email">—</span></div>
+        <div class="set-row"><span class="lab">Roblox</span><span class="val mono" id="set-rbx">—</span></div>
+        <div class="set-row"><span class="lab">Member since</span><span class="val mono" id="set-since">—</span></div>
+      </div>
+      <div class="card">
+        <h2>Password</h2>
+        <label>Current password</label>
+        <input id="set-cur" type="password" autocomplete="current-password"/>
+        <label>New password</label>
+        <input id="set-new" type="password" autocomplete="new-password" placeholder="min 8 chars"/>
+        <button class="primary" id="btn-pass" style="margin-top:14px;width:100%">Change password</button>
+        <p class="note" id="pass-out"></p>
+      </div>
+      <div class="card">
+        <h2>Sessions</h2>
+        <div id="sess-list"><p class="muted">Loading…</p></div>
+        <button class="btn-danger" id="btn-kill-sess" style="margin-top:12px">Log out other sessions</button>
+      </div>
+      <div class="card danger">
+        <h2>Sign out</h2>
+        <p class="muted" style="margin-bottom:12px">End this session on this device.</p>
+        <button class="btn-danger" id="btn-logout2">Log out</button>
+      </div>
     </div>
   </div>
 
@@ -829,7 +903,7 @@ const DASHBOARD_JS = `
     if (nav) nav.querySelectorAll('button').forEach(function(b) {
       b.classList.toggle('active', b.dataset.tab === name);
     });
-    var panes = ['free','history','bulk','premium'];
+    var panes = ['free','history','bulk','premium','settings'];
     panes.forEach(function(p) {
       var el = document.getElementById('pane-' + p);
       if (el) el.classList.toggle('active', p === name);
@@ -858,6 +932,12 @@ const DASHBOARD_JS = `
       var pv = document.getElementById('plan-val'); if (pv) pv.textContent = d.plan || '—';
       var su = document.getElementById('side-user');
       if (su) su.innerHTML = '<b>' + esc(d.username || '?') + '</b>' + esc(d.plan || 'day') + ' plan · ' + limitUsed + '/' + limitMax + ' today';
+      var hu = document.getElementById('hero-used'); if (hu) hu.textContent = limitUsed;
+      var hm = document.getElementById('hero-max'); if (hm) hm.textContent = limitMax;
+      var hr = document.getElementById('hero-reset'); if (hr) hr.textContent = fmtHMS(resetInSec);
+      var hc = document.getElementById('hero-cool'); if (hc) hc.textContent = cooldownSec + 's';
+      var hp = document.getElementById('hero-plan'); if (hp) hp.textContent = d.plan || '—';
+      var hb = document.getElementById('hero-bar'); if (hb) hb.style.width = (limitMax ? Math.min(100, Math.round(limitUsed / limitMax * 100)) : 0) + '%';
       var pp = document.getElementById('prem-plan'); if (pp) pp.textContent = d.plan || '—';
       var pe = document.getElementById('prem-exp');
       if (pe) pe.textContent = d.key_expires_at ? new Date(d.key_expires_at * 1000).toLocaleDateString() : 'never';
@@ -897,12 +977,15 @@ const DASHBOARD_JS = `
       if (!d.ok) return;
       var wrap = document.getElementById('region-cats'); if (!wrap) return;
       if (!d.regions.length) { wrap.innerHTML = '<p class="muted" style="padding:8px 4px">Pool is empty.</p>'; return; }
+      var maxC = 1;
+      for (var m = 0; m < d.regions.length; m++) maxC = Math.max(maxC, d.regions[m].count);
       var html = '';
       for (var i = 0; i < d.regions.length; i++) {
         var x = d.regions[i];
         var active = selectedRegion === x.region ? ' active' : '';
         var disabled = x.count === 0 ? ' disabled' : '';
-        var stock = x.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + x.count + ' stock</span>';
+        var stock = x.count === 0 ? '<span class="cat-stock empty">no stock</span>'
+          : '<span class="cat-stock"><span class="meter"><i style="width:' + Math.max(6, Math.round(x.count / maxC * 100)) + '%"></i></span>' + x.count + '</span>';
         html += '<button class="cat-item' + active + disabled + '" data-region="' + esc(x.region) + '"' + disabled + '><span class="cat-name">' + esc(x.region) + ' accounts</span>' + stock + '</button>';
       }
       wrap.innerHTML = html;
@@ -925,12 +1008,15 @@ const DASHBOARD_JS = `
       var d = await r.json();
       if (!d.ok) return;
       var wrap = document.getElementById('age-cats'); if (!wrap) return;
+      var maxA = 1;
+      for (var q = 0; q < d.buckets.length; q++) maxA = Math.max(maxA, d.buckets[q].count);
       var html = '';
       for (var i = 0; i < d.buckets.length; i++) {
         var b = d.buckets[i];
         var active = selectedAge === b.key ? ' active' : '';
         var disabled = b.count === 0 ? ' disabled' : '';
-        var stock = b.count === 0 ? '<span class="cat-stock empty">no stock</span>' : '<span class="cat-stock">' + b.count + ' stock</span>';
+        var stock = b.count === 0 ? '<span class="cat-stock empty">no stock</span>'
+          : '<span class="cat-stock"><span class="meter"><i style="width:' + Math.max(6, Math.round(b.count / maxA * 100)) + '%"></i></span>' + b.count + '</span>';
         html += '<button class="cat-item' + active + disabled + '" data-age="' + esc(b.key) + '"' + disabled + '><span class="cat-name">' + esc(b.label) + '</span>' + stock + '</button>';
       }
       wrap.innerHTML = html;
@@ -1108,8 +1194,13 @@ const DASHBOARD_JS = `
     var out = document.getElementById('bulk-out');
     var want = Math.max(1, Math.min(40, parseInt(document.getElementById('bulk-count').value || '1', 10)));
     bulkBtn.disabled = true;
-    out.innerHTML = '<p class="muted">Claiming 0/' + want + '…</p>';
+    out.innerHTML = '<p class="muted" id="bulk-prog">Claiming 0/' + want + '…</p><div id="bulk-rows"></div>';
+    var rowsEl = document.getElementById('bulk-rows');
     var got = 0, stopped = '';
+    function bulkProg() {
+      var p = document.getElementById('bulk-prog');
+      if (p) p.textContent = 'Claiming ' + got + '/' + want + '…';
+    }
     for (var i = 0; i < want; i++) {
       try {
         var r = await fetch('/api/claim', {
@@ -1121,8 +1212,8 @@ const DASHBOARD_JS = `
         if (d.ok) {
           got++;
           limitUsed += 1;
-          out.innerHTML += '<div class="bulk-row"><span>' + esc(d.account.u || '?') + '</span><span class="ok">claimed</span></div>';
-          out.innerHTML = out.innerHTML.replace(/Claiming \d+\/\d+/, 'Claiming ' + got + '/' + want);
+          if (rowsEl) rowsEl.innerHTML += '<div class="bulk-row"><span>' + esc(d.account.u || '?') + '</span><span class="ok">claimed</span></div>';
+          bulkProg();
         } else if (d.error === 'cooldown') { stopped = 'cooldown (' + (d.wait_seconds || '?') + 's)'; break; }
         else if (d.error === 'daily_limit') { stopped = 'daily limit reached'; break; }
         else if (d.error === 'pool_empty') { stopped = 'pool empty for this filter'; break; }
@@ -1138,9 +1229,85 @@ const DASHBOARD_JS = `
     toast(got ? ('Bulk done — ' + got + ' claimed' + (stopped ? ' (' + stopped + ')' : '')) : ('Bulk stopped: ' + stopped), got ? 'ok' : 'err');
   });
 
+  var meLoaded = false;
+  async function loadMe() {
+    try {
+      var r = await fetch('/api/me', { credentials: 'same-origin' });
+      var d = await r.json();
+      if (!d.ok) return;
+      meLoaded = true;
+      var set = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+      set('set-user', d.username || '—');
+      set('set-email', d.email_masked || '—');
+      set('set-rbx', d.roblox_username || '—');
+      set('set-since', d.member_since ? new Date(d.member_since * 1000).toLocaleDateString() : '—');
+    } catch(e) {}
+  }
+  async function loadSessions() {
+    var el = document.getElementById('sess-list'); if (!el) return;
+    try {
+      var r = await fetch('/api/sessions', { credentials: 'same-origin' });
+      var d = await r.json();
+      if (!d.ok || !d.sessions.length) { el.innerHTML = '<p class="muted">No active sessions.</p>'; return; }
+      var html = '';
+      for (var i = 0; i < d.sessions.length; i++) {
+        var s = d.sessions[i];
+        html += '<div class="sess"><span>' + (s.current ? '<span class="badge ok">THIS DEVICE</span>' : '<span class="badge">active</span>')
+          + ' <span class="muted">since ' + new Date(s.created_at * 1000).toLocaleDateString() + '</span></span>'
+          + '<span class="mono muted">' + esc(s.ip) + '</span></div>';
+      }
+      el.innerHTML = html;
+    } catch(e) { el.innerHTML = '<p class="err">Could not load sessions.</p>'; }
+  }
+  var passBtn = document.getElementById('btn-pass');
+  if (passBtn) passBtn.addEventListener('click', async function() {
+    var out = document.getElementById('pass-out');
+    out.className = 'note'; out.textContent = 'Saving…';
+    var cur = document.getElementById('set-cur').value;
+    var nw = document.getElementById('set-new').value;
+    if (nw.length < 8) { out.className = 'note err'; out.textContent = 'New password min 8 chars.'; return; }
+    try {
+      var r = await fetch('/api/settings/password', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ current: cur, new: nw })
+      });
+      var d = await r.json();
+      if (d.ok) {
+        out.className = 'note ok'; out.textContent = 'Password changed. Other sessions logged out.';
+        document.getElementById('set-cur').value = '';
+        document.getElementById('set-new').value = '';
+        toast('Password changed', 'ok');
+        loadSessions();
+      } else {
+        out.className = 'note err';
+        out.textContent = d.error === 'wrong_password' ? 'Current password is wrong.' : (d.error || 'error');
+      }
+    } catch(e) { out.className = 'note err'; out.textContent = String(e); }
+  });
+  var killBtn = document.getElementById('btn-kill-sess');
+  if (killBtn) killBtn.addEventListener('click', async function() {
+    try {
+      var r = await fetch('/api/settings/logout-all', { method: 'POST', credentials: 'same-origin' });
+      var d = await r.json();
+      if (d.ok) { toast('Logged out ' + (d.killed || 0) + ' other session(s)', 'ok'); loadSessions(); }
+      else toast(d.error || 'error', 'err');
+    } catch(e) { toast(String(e), 'err'); }
+  });
+  var lo2 = document.getElementById('btn-logout2');
+  if (lo2) lo2.addEventListener('click', function() { window.location.href = '/logout'; });
+
+  var _origSetTab = setTab;
+  setTab = function(name) {
+    _origSetTab(name);
+    if (name === 'settings' && !meLoaded) { loadMe(); loadSessions(); }
+    if (name === 'settings' && meLoaded) { loadSessions(); }
+  };
+
   setInterval(function() {
     if (resetInSec > 0) resetInSec -= 1;
     var riEl = document.getElementById('reset-in'); if (riEl) riEl.textContent = fmtHMS(Math.max(0, resetInSec));
+    var hrEl = document.getElementById('hero-reset'); if (hrEl) hrEl.textContent = fmtHMS(Math.max(0, resetInSec));
     if (limitUsed >= limitMax) {
       var tEl = document.getElementById('limit-time');
       if (tEl) tEl.textContent = fmtHMS(Math.max(0, resetInSec)) + ' left';
@@ -1581,6 +1748,91 @@ async function handleClaim(env, request) {
 }
 
 // ============================================================
+//  SETTINGS (me / password / sessions)
+// ============================================================
+async function handleMe(env, request) {
+  const user = await requireUser(env, request);
+  if (!user) return json({ ok: false, error: "unauthorized" }, 401);
+  const ks = await loadKeyStatus(env, user.key);
+  const full = await env.DB.prepare(
+    `SELECT created_at FROM ghgen_users WHERE id = ? LIMIT 1`
+  ).bind(user.id).first();
+  return json({
+    ok: true,
+    username: user.ghgen_username,
+    email_masked: maskEmail(user.email),
+    roblox_username: user.roblox_username,
+    discord_linked: !!user.discord_id,
+    plan: ks.plan || "day",
+    key_valid: ks.valid,
+    key_expires_at: ks.expires_at || 0,
+    member_since: full ? Number(full.created_at) : 0,
+  });
+}
+
+async function handlePassword(env, request) {
+  const user = await requireUser(env, request);
+  if (!user) return json({ ok: false, error: "unauthorized" }, 401);
+  if (!await hitRate(env, getIP(request), "settings-password", 5, 3600))
+    return json({ ok: false, error: "rate_limited" }, 429);
+  let body;
+  try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  const current = String(body.current || "");
+  const next = String(body.new || "");
+  if (next.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
+  const row = await env.DB.prepare(
+    `SELECT password_hash, salt FROM ghgen_users WHERE id = ? LIMIT 1`
+  ).bind(user.id).first();
+  if (!row || !row.password_hash || !await verifyPassword(current, row.password_hash, row.salt))
+    return json({ ok: false, error: "wrong_password" }, 403);
+  const { hash, salt } = await hashPassword(next);
+  await env.DB.prepare(
+    `UPDATE ghgen_users SET password_hash = ?, salt = ? WHERE id = ?`
+  ).bind(hash, salt, user.id).run();
+  // New password kills every OTHER session — steal-proof by default.
+  const sid = getCookie(request, "GHGEN_SESSION");
+  await env.DB.prepare(
+    `DELETE FROM ghgen_sessions WHERE user_id = ? AND session_id != ?`
+  ).bind(user.id, sid || "").run();
+  await env.DB.prepare(`INSERT INTO ghgen_log (user_id, action, ip, created_at) VALUES (?, ?, ?, ?)`)
+    .bind(user.id, "password_changed", getIP(request), now()).run();
+  return json({ ok: true });
+}
+
+async function handleSessionsList(env, request) {
+  const user = await requireUser(env, request);
+  if (!user) return json({ ok: false, error: "unauthorized" }, 401);
+  const sid = getCookie(request, "GHGEN_SESSION") || "";
+  const rows = await env.DB.prepare(
+    `SELECT created_at, expires_at, ip_hash,
+            CASE WHEN session_id = ? THEN 1 ELSE 0 END AS is_cur
+     FROM ghgen_sessions
+     WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 20`
+  ).bind(sid, user.id, now()).all();
+  return json({
+    ok: true,
+    sessions: (rows.results || []).map(s => ({
+      current: Number(s.is_cur) === 1,
+      created_at: Number(s.created_at),
+      expires_at: Number(s.expires_at),
+      ip: s.ip_hash ? String(s.ip_hash).slice(0, 10) + "…" : "—",
+    })),
+  });
+}
+
+async function handleLogoutAll(env, request) {
+  const user = await requireUser(env, request);
+  if (!user) return json({ ok: false, error: "unauthorized" }, 401);
+  if (!await hitRate(env, getIP(request), "logout-all", 10, 3600))
+    return json({ ok: false, error: "rate_limited" }, 429);
+  const sid = getCookie(request, "GHGEN_SESSION");
+  const r = await env.DB.prepare(
+    `DELETE FROM ghgen_sessions WHERE user_id = ? AND session_id != ?`
+  ).bind(user.id, sid || "").run();
+  return json({ ok: true, killed: (r.meta && r.meta.changes) || 0 });
+}
+
+// ============================================================
 //  POOL ADMIN
 // ============================================================
 async function handlePoolUpload(request, env) {
@@ -1684,6 +1936,10 @@ export default {
       if (request.method === "GET"  && path === "/api/age-buckets")  return await handleAgeBuckets(env, request);
       if (request.method === "GET"  && path === "/api/accounts")     return await handleAccounts(env, request);
       if (request.method === "POST" && path === "/api/claim")        return await handleClaim(env, request);
+      if (request.method === "GET"  && path === "/api/me")           return await handleMe(env, request);
+      if (request.method === "POST" && path === "/api/settings/password") return await handlePassword(env, request);
+      if (request.method === "GET"  && path === "/api/sessions")     return await handleSessionsList(env, request);
+      if (request.method === "POST" && path === "/api/settings/logout-all") return await handleLogoutAll(env, request);
 
       // pool admin
       if (request.method === "POST" && path === "/api/pool/upload") return await handlePoolUpload(request, env);
