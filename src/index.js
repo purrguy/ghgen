@@ -26,6 +26,7 @@ const AGE_BUCKETS = [
 ];
 
 const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
+let _migratedAt = 0;
 let MAIN_SITE = "https://greedyhudzell.xyz";
 function setMainSite(v) { if (v) MAIN_SITE = v; }
 
@@ -131,6 +132,82 @@ async function verifyPassword(password, hashB64, saltB64) {
     );
     return bytesToB64(new Uint8Array(bits)) === hashB64;
   } catch { return false; }
+}
+
+// ============================================================
+//  RATE LIMITS + SELF-MIGRATION
+// ============================================================
+// Workers are stateless, so limits live in D1. Fail-open: if the table
+// is missing (migration not applied yet) requests still flow — the
+// ensure step below creates it on first hit.
+async function hitRate(env, ip, action, limit, windowSec) {
+  const t = now();
+  try {
+    await env.DB.prepare(`DELETE FROM ghgen_ratelimit WHERE ts < ?`)
+      .bind(t - windowSec).run();
+    const r = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM ghgen_ratelimit WHERE ip = ? AND action = ? AND ts > ?`
+    ).bind(ip || "?", action, t - windowSec).first();
+    if (Number(r?.c || 0) >= limit) return false;
+    await env.DB.prepare(
+      `INSERT INTO ghgen_ratelimit (ip, action, ts) VALUES (?, ?, ?)`
+    ).bind(ip || "?", action, t).run();
+    return true;
+  } catch { return true; }
+}
+
+async function ensureMigrations(env) {
+  try {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS ghgen_ratelimit (
+         ip TEXT NOT NULL, action TEXT NOT NULL, ts INTEGER NOT NULL)`
+    ).run();
+    await env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_ratelimit_ip_action_ts
+       ON ghgen_ratelimit(ip, action, ts)`
+    ).run();
+    try {
+      await env.DB.prepare(
+        `ALTER TABLE ghgen_verifications ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`
+      ).run();
+    } catch {}
+    await env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_pool_status_region
+       ON ghgen_pool(status, region)`
+    ).run();
+    await env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_pool_status_age
+       ON ghgen_pool(status, age_days)`
+    ).run();
+    await env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_pool_issued_to ON ghgen_pool(issued_to)`
+    ).run();
+  } catch (e) {
+    console.error("ensureMigrations:", e);
+  }
+}
+
+// Code-entry hardening: 10 wrong guesses burns the code. Returns the
+// attempt count so callers can report tries_left or a lockout.
+async function burnAttempt(env, row) {
+  const n = Number(row?.attempts || 0) + 1;
+  try {
+    await env.DB.prepare(
+      `UPDATE ghgen_verifications SET attempts = ? WHERE id = ?`
+    ).bind(n, row.id).run();
+    if (n >= 10) {
+      await env.DB.prepare(
+        `UPDATE ghgen_verifications SET used = 1 WHERE id = ?`
+      ).bind(row.id).run();
+    }
+  } catch {}
+  return n;
+}
+
+async function wrongCode(env, row) {
+  const n = await burnAttempt(env, row);
+  if (n >= 10) return json({ ok: false, error: "code_locked" }, 403);
+  return json({ ok: false, error: "invalid_code", tries_left: Math.max(0, 10 - n) }, 400);
 }
 
 // ============================================================
@@ -333,6 +410,17 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .acc-preview .v.reveal:hover{color:var(--accent);border-color:var(--accent)}
 .acc-preview .v.reveal.copied{color:var(--ok);border-color:var(--ok)}
 .pane{display:none}.pane.active{display:block}
+.toast-wrap{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:99;align-items:center}
+.toast{background:var(--card);border:1px solid var(--accent);color:var(--text);padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.5);animation:toast-in .18s ease-out;max-width:min(480px,90vw);text-align:center}
+.toast.err{border-color:var(--bad)}
+.toast.ok{border-color:var(--ok)}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px)}}
+.side-foot{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.side-foot button{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:500;cursor:pointer;text-align:left;font-family:inherit;width:100%}
+.side-foot button:hover{background:var(--bg2);color:var(--bad)}
+.bulk-row{display:flex;justify-content:space-between;gap:10px;padding:7px 2px;border-bottom:1px dashed rgba(255,255,255,.06);font-size:13px}
+.bulk-row:last-child{border-bottom:none}
+@media(max-width:760px){.side-nav{flex-direction:row;overflow-x:auto;padding-bottom:6px}.side-nav button{white-space:nowrap}.side-user{display:none}.main{padding:20px 16px}}
 `;
 
 // ============================================================
@@ -361,6 +449,7 @@ function pageShell(title, content, activeTab) {
     <nav class="side-nav" id="side-nav">
       ${nav}
     </nav>
+    <div class="side-foot"><button id="btn-logout" type="button"><span>🚪</span> Log out</button></div>
     <div class="side-user" id="side-user">Loading…</div>
   </aside>
   <main class="main">
@@ -501,17 +590,28 @@ function dashboardPage(user, keyStatus) {
 
   <div class="pane" id="pane-bulk">
     <h1>Bulk</h1>
-    <p class="sub">Bulk claim — coming soon.</p>
+    <p class="sub">Claim several accounts in a row with your current Main filter.</p>
     <div class="card">
-      <p class="muted">Bulk features are being developed. Check back later.</p>
+      <label>How many</label>
+      <input id="bulk-count" type="number" min="1" max="40" value="5" inputmode="numeric"/>
+      <p class="muted" style="margin-top:8px;font-size:12px">Stops on cooldown, daily limit or empty pool. Everything lands in History.</p>
+      <button class="primary" id="btn-bulk" style="margin-top:14px">Claim in bulk</button>
+      <div id="bulk-out" style="margin-top:12px"></div>
     </div>
   </div>
 
   <div class="pane" id="pane-premium">
     <h1>Premium</h1>
-    <p class="sub">Premium pool — coming soon.</p>
+    <p class="sub">Bigger limits, longer windows.</p>
     <div class="card">
-      <p class="muted">Higher limits, older accounts, better regions.</p>
+      <h2>Your key</h2>
+      <div class="acc-row"><span class="label">Plan</span><span class="val" id="prem-plan">—</span></div>
+      <div class="acc-row"><span class="label">Expires</span><span class="val" id="prem-exp">—</span></div>
+      <div class="acc-row"><span class="label">Status</span><span class="val" id="prem-status">—</span></div>
+    </div>
+    <div class="card">
+      <h2>Plans</h2>
+      <p class="muted">day · 3 claims &nbsp;&nbsp; week · 10 &nbsp;&nbsp; month · 30 &nbsp;&nbsp; year · 40<br>Contact staff on the main site to upgrade your key.</p>
     </div>
   </div>
 
@@ -525,7 +625,7 @@ function docsPage() {
   <p class="sub">How GHGen works.</p>
   <div class="card"><h2>Register</h2><p class="muted">Pick a username, email, password and Roblox username. We'll send a code.</p></div>
   <div class="card"><h2>Login</h2><p class="muted">Enter username + password. We'll send a fresh code to your email.</p></div>
-  <div class="card"><h2>Claim</h2><p class="muted">Pick a Category, then click Claim. Server checks daily limit and cooldown.</p></div>
+  <div class="card"><h2>Claim</h2><p class="muted">Pick a Category, then click Claim. Server checks daily limit and cooldown. The Bulk tab claims several in a row.</p></div>
   <div class="card"><h2>Filters</h2><p class="muted">Location — country. Age — how many days since the Roblox account was created.</p></div>
   `);
 }
@@ -613,6 +713,16 @@ const AUTH_JS = `
     return await r.json();
   }
 
+  function friendly(d) {
+    if (!d || d.ok) return '';
+    if (d.error === 'rate_limited') return 'Too many tries — wait a bit and retry.';
+    if (d.error === 'code_locked') return 'Too many wrong codes — request a fresh one.';
+    if (d.error === 'invalid_code' && d.tries_left != null) return 'Wrong code (' + d.tries_left + ' tries left).';
+    if (d.error === 'code_expired') return 'Code expired — request a fresh one.';
+    if (d.error === 'invalid_credentials') return 'Wrong username or password.';
+    return d.error || 'error';
+  }
+
   document.getElementById('btn-login').addEventListener('click', async function() {
     var out = document.getElementById('login-out');
     out.className = 'note'; out.textContent = 'Checking…';
@@ -620,7 +730,7 @@ const AUTH_JS = `
     var password = document.getElementById('login-pass').value;
     if (!username) { out.className = 'note err'; out.textContent = 'Enter username'; return; }
     var d = await post('/api/auth/login-start', { username: username, password: password });
-    if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
+    if (!d.ok) { out.className = 'note err'; out.textContent = friendly(d); return; }
     lastUsername = username;
     showVerify(d.email_masked, d.legacy ? 'legacy' : 'login');
   });
@@ -639,7 +749,7 @@ const AUTH_JS = `
       out.className = 'note err'; out.textContent = 'Fill all required fields'; return;
     }
     var d = await post('/api/auth/register-start', payload);
-    if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
+    if (!d.ok) { out.className = 'note err'; out.textContent = friendly(d); return; }
     lastUsername = payload.username;
     showVerify(d.email_masked, 'register');
   });
@@ -650,7 +760,7 @@ const AUTH_JS = `
     var username = document.getElementById('forgot-user').value.trim();
     if (!username) { out.className = 'note err'; out.textContent = 'Enter username'; return; }
     var d = await post('/api/auth/forgot-start', { username: username });
-    if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
+    if (!d.ok) { out.className = 'note err'; out.textContent = friendly(d); return; }
     lastUsername = username;
     showVerify(d.email_masked, 'forgot');
   });
@@ -674,7 +784,7 @@ const AUTH_JS = `
       payload = { code: code, password: p2 };
     }
     var d = await post(endpoint, payload);
-    if (!d.ok) { out.className = 'note err'; out.textContent = d.error || 'error'; return; }
+    if (!d.ok) { out.className = 'note err'; out.textContent = friendly(d); return; }
     window.location.href = '/dashboard';
   });
 
@@ -703,6 +813,15 @@ const DASHBOARD_JS = `
   function mask(v){ if(!v) return '—'; var s=String(v); if(s.length<=6) return s[0]+'•••'; return s.slice(0,3)+'•••'+s.slice(-2); }
   function fmtHMS(sec){ var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function toast(msg, kind){
+    var w = document.getElementById('toast-wrap');
+    if (!w) { w = document.createElement('div'); w.id = 'toast-wrap'; w.className = 'toast-wrap'; document.body.appendChild(w); }
+    var t = document.createElement('div');
+    t.className = 'toast ' + (kind || '');
+    t.textContent = msg;
+    w.appendChild(t);
+    setTimeout(function(){ t.remove(); }, 4200);
+  }
 
   function setTab(name) {
     tab = name;
@@ -721,6 +840,8 @@ const DASHBOARD_JS = `
   if (nav) nav.querySelectorAll('button').forEach(function(b) {
     b.addEventListener('click', function() { setTab(b.dataset.tab); });
   });
+  var lob = document.getElementById('btn-logout');
+  if (lob) lob.addEventListener('click', function() { window.location.href = '/logout'; });
 
   async function loadState() {
     try {
@@ -735,6 +856,12 @@ const DASHBOARD_JS = `
       var csEl = document.getElementById('cooldown-sec'); if (csEl) csEl.textContent = cooldownSec + 's';
       var riEl = document.getElementById('reset-in'); if (riEl) riEl.textContent = fmtHMS(resetInSec);
       var pv = document.getElementById('plan-val'); if (pv) pv.textContent = d.plan || '—';
+      var su = document.getElementById('side-user');
+      if (su) su.innerHTML = '<b>' + esc(d.username || '?') + '</b>' + esc(d.plan || 'day') + ' plan · ' + limitUsed + '/' + limitMax + ' today';
+      var pp = document.getElementById('prem-plan'); if (pp) pp.textContent = d.plan || '—';
+      var pe = document.getElementById('prem-exp');
+      if (pe) pe.textContent = d.key_expires_at ? new Date(d.key_expires_at * 1000).toLocaleDateString() : 'never';
+      var ps = document.getElementById('prem-status'); if (ps) ps.textContent = d.key_valid ? 'ACTIVE' : 'EXPIRED / REVOKED';
       updateLimitBanner();
       if (d.next_claim_in > 0) startCooldown(d.next_claim_in);
       updateClaimButton();
@@ -954,6 +1081,7 @@ const DASHBOARD_JS = `
         updateLimitBanner();
         loadAccounts(); loadRegions(); loadAgeBuckets();
         startCooldown(cooldownSec);
+        toast('Account claimed — ' + (d.account.u || ''), 'ok');
       } else if (d.error === 'cooldown') {
         out.className = 'note err'; out.textContent = d.message || 'Cooldown';
         startCooldown(d.wait_seconds || cooldownSec);
@@ -973,6 +1101,41 @@ const DASHBOARD_JS = `
       out.className = 'note err'; out.textContent = String(e);
       updateClaimButton();
     }
+  });
+
+  var bulkBtn = document.getElementById('btn-bulk');
+  if (bulkBtn) bulkBtn.addEventListener('click', async function() {
+    var out = document.getElementById('bulk-out');
+    var want = Math.max(1, Math.min(40, parseInt(document.getElementById('bulk-count').value || '1', 10)));
+    bulkBtn.disabled = true;
+    out.innerHTML = '<p class="muted">Claiming 0/' + want + '…</p>';
+    var got = 0, stopped = '';
+    for (var i = 0; i < want; i++) {
+      try {
+        var r = await fetch('/api/claim', {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ region: selectedRegion || null, age: selectedAge || null })
+        });
+        var d = await r.json();
+        if (d.ok) {
+          got++;
+          limitUsed += 1;
+          out.innerHTML += '<div class="bulk-row"><span>' + esc(d.account.u || '?') + '</span><span class="ok">claimed</span></div>';
+          out.innerHTML = out.innerHTML.replace(/Claiming \d+\/\d+/, 'Claiming ' + got + '/' + want);
+        } else if (d.error === 'cooldown') { stopped = 'cooldown (' + (d.wait_seconds || '?') + 's)'; break; }
+        else if (d.error === 'daily_limit') { stopped = 'daily limit reached'; break; }
+        else if (d.error === 'pool_empty') { stopped = 'pool empty for this filter'; break; }
+        else { stopped = d.error || 'error'; break; }
+      } catch(e) { stopped = String(e); break; }
+      await new Promise(function(res) { setTimeout(res, 1200); });
+    }
+    var cEl = document.getElementById('counter'); if (cEl) cEl.textContent = limitUsed + ' / ' + limitMax;
+    updateLimitBanner();
+    loadAccounts(); loadRegions(); loadAgeBuckets();
+    loadState();
+    bulkBtn.disabled = false;
+    toast(got ? ('Bulk done — ' + got + ' claimed' + (stopped ? ' (' + stopped + ')' : '')) : ('Bulk stopped: ' + stopped), got ? 'ok' : 'err');
   });
 
   setInterval(function() {
@@ -997,6 +1160,8 @@ async function handleLoginStart(request, env) {
   const username = String(body.username || "").trim();
   const password = String(body.password || "");
   if (!validUsername(username)) return json({ ok: false, error: "invalid_username" }, 400);
+  if (!await hitRate(env, getIP(request), "login-start", 5, 3600))
+    return json({ ok: false, error: "rate_limited" }, 429);
 
   const user = await env.DB.prepare(
     `SELECT id, email, password_hash, salt FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
@@ -1052,6 +1217,8 @@ async function handleRegisterStart(request, env) {
   if (!validUsername(username)) return json({ ok: false, error: "invalid_username" }, 400);
   if (!validEmail(email)) return json({ ok: false, error: "invalid_email" }, 400);
   if (password.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
+  if (!await hitRate(env, getIP(request), "register-start", 5, 3600))
+    return json({ ok: false, error: "rate_limited" }, 429);
   if (!validRobloxUsername(roblox_username)) return json({ ok: false, error: "invalid_roblox_username" }, 400);
 
   if (key && !/^GH-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(key) && !key.startsWith("GH-PAID-")) {
@@ -1116,6 +1283,8 @@ async function handleVerify(request, env) {
   try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
   const code = String(body.code || "").trim();
   if (!/^\d{6}$/.test(code)) return json({ ok: false, error: "invalid_code" }, 400);
+  if (!await hitRate(env, getIP(request), "verify", 15, 600))
+    return json({ ok: false, error: "rate_limited" }, 429);
 
   const pendingId = getCookie(request, "GHGEN_PENDING");
   if (!pendingId) return json({ ok: false, error: "no_pending_verification" }, 400);
@@ -1125,7 +1294,7 @@ async function handleVerify(request, env) {
   ).bind(pendingId).first();
   if (!v) return json({ ok: false, error: "no_pending_verification" }, 400);
   if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
-  if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
+  if (String(v.code) !== code) return await wrongCode(env, v);
 
   const user = await env.DB.prepare(
     `SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`
@@ -1152,6 +1321,8 @@ async function handleLegacySetup(request, env) {
   const password = String(body.password || "");
   if (!/^\d{6}$/.test(code)) return json({ ok: false, error: "invalid_code" }, 400);
   if (password.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
+  if (!await hitRate(env, getIP(request), "verify", 15, 600))
+    return json({ ok: false, error: "rate_limited" }, 429);
 
   const pendingId = getCookie(request, "GHGEN_PENDING");
   if (!pendingId) return json({ ok: false, error: "no_pending_verification" }, 400);
@@ -1161,7 +1332,7 @@ async function handleLegacySetup(request, env) {
   ).bind(pendingId).first();
   if (!v) return json({ ok: false, error: "no_pending_verification" }, 400);
   if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
-  if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
+  if (String(v.code) !== code) return await wrongCode(env, v);
 
   const user = await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(v.email).first();
   if (!user) return json({ ok: false, error: "user_not_found" }, 400);
@@ -1187,6 +1358,8 @@ async function handleForgotStart(request, env) {
   try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
   const username = String(body.username || "").trim();
   if (!validUsername(username)) return json({ ok: false, error: "invalid_username" }, 400);
+  if (!await hitRate(env, getIP(request), "forgot-start", 5, 3600))
+    return json({ ok: false, error: "rate_limited" }, 429);
 
   const user = await env.DB.prepare(
     `SELECT id, email FROM ghgen_users WHERE ghgen_username = ? LIMIT 1`
@@ -1216,6 +1389,8 @@ async function handleForgotReset(request, env) {
   const password = String(body.password || "");
   if (!/^\d{6}$/.test(code)) return json({ ok: false, error: "invalid_code" }, 400);
   if (password.length < 8) return json({ ok: false, error: "password_too_short" }, 400);
+  if (!await hitRate(env, getIP(request), "verify", 15, 600))
+    return json({ ok: false, error: "rate_limited" }, 429);
 
   const pendingId = getCookie(request, "GHGEN_PENDING");
   if (!pendingId) return json({ ok: false, error: "no_pending_verification" }, 400);
@@ -1225,7 +1400,7 @@ async function handleForgotReset(request, env) {
   ).bind(pendingId).first();
   if (!v) return json({ ok: false, error: "no_pending_verification" }, 400);
   if (Number(v.expires_at) <= now()) return json({ ok: false, error: "code_expired" }, 400);
-  if (String(v.code) !== code) return json({ ok: false, error: "invalid_code" }, 400);
+  if (String(v.code) !== code) return await wrongCode(env, v);
 
   const user = await env.DB.prepare(`SELECT id FROM ghgen_users WHERE email = ? LIMIT 1`).bind(v.email).first();
   if (!user) return json({ ok: false, error: "user_not_found" }, 400);
@@ -1275,9 +1450,11 @@ async function handleState(env, request) {
 
   return json({
     ok: true,
+    username: user.ghgen_username,
     limit: plan.limit, cooldown_seconds: plan.cooldown, used: count,
     reset_in: resetIn, next_claim_in: nextClaimIn,
-    key_valid: ks.valid, plan: ks.plan || "day"
+    key_valid: ks.valid, plan: ks.plan || "day",
+    key_expires_at: ks.expires_at || 0
   });
 }
 
@@ -1380,9 +1557,15 @@ async function handleClaim(env, request) {
   const res = await env.DB.prepare(sql).bind(user.id, t, ...params).first();
   if (!res) return json({ ok: false, error: "pool_empty" }, 404);
 
+  // Counter that actually counts: same-day conflicts increment, day
+  // rollover resets to 1. (The old version wrote excluded.count, i.e.
+  // always 1, so daily limits never tripped.)
   await env.DB.prepare(
     `INSERT INTO ghgen_buckets (key, day_bucket, count, last_claim_at) VALUES (?, ?, 1, ?)
-     ON CONFLICT(key) DO UPDATE SET day_bucket = excluded.day_bucket, count = excluded.count, last_claim_at = excluded.last_claim_at`
+     ON CONFLICT(key) DO UPDATE SET day_bucket = excluded.day_bucket,
+       count = CASE WHEN ghgen_buckets.day_bucket = excluded.day_bucket
+                    THEN ghgen_buckets.count + 1 ELSE 1 END,
+       last_claim_at = excluded.last_claim_at`
   ).bind(user.key, dayBucket, t).run();
 
   await env.DB.prepare(
@@ -1459,7 +1642,8 @@ async function handlePoolStats(request, env) {
   const avail = await env.DB.prepare(`SELECT COUNT(*) as c FROM ghgen_pool WHERE status='available'`).first();
   const issued = await env.DB.prepare(`SELECT COUNT(*) as c FROM ghgen_pool WHERE status='issued'`).first();
   const withAge = await env.DB.prepare(`SELECT COUNT(*) as c FROM ghgen_pool WHERE status='available' AND age_days IS NOT NULL`).first();
-  return json({ ok: true, available: avail.c, issued: issued.c, total: avail.c + issued.c, with_age: withAge.c });
+  return json({ ok: true, available: avail.c, issued: issued.c, total: avail.c + issued.c, with_age: withAge.c,
+    using_env_secret: !!env.UPLOAD_SECRET, pool_key_env: !!env.POOL_KEY, resend_env: !!env.RESEND_API_KEY });
 }
 
 // ============================================================
@@ -1469,6 +1653,12 @@ export default {
   async fetch(request, env) {
     setMainSite(env.MAIN_SITE);
     try {
+      // Self-migration, at most once per 10 min per isolate — keeps the
+      // per-request cost at zero on the hot path.
+      if (now() - _migratedAt > 600) {
+        _migratedAt = now();
+        await ensureMigrations(env);
+      }
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
       const url = new URL(request.url);
       let path = url.pathname;
@@ -1515,12 +1705,7 @@ export default {
       return html(pageShell("404", `<h1>404</h1><p class="sub">Not found.</p>`), 404);
     } catch (e) {
       console.error("ghgen error:", e);
-      return json({
-        ok: false,
-        error: "internal",
-        message: String(e?.message || e),
-        stack: String(e?.stack || "").slice(0, 500)
-      }, 500);
+      return json({ ok: false, error: "internal" }, 500);
     }
   },
 };
