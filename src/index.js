@@ -507,7 +507,8 @@ function pageShell(title, content, activeTab) {
   let nav = '';
   nav += `<button data-tab="free"${activeTab === 'free' ? ' class="active"' : ''}><span>🏠</span> Main</button>`;
   nav += `<button data-tab="history"${activeTab === 'history' ? ' class="active"' : ''}><span>📜</span> History</button>`;
-  nav += `<button data-tab="bulk"${activeTab === 'bulk' ? ' class="active"' : ''}><span>📦</span> Bulk</button>`;
+  // Bulk is parked for now (pane stays in the markup, just unlinked).
+  // nav += `<button data-tab="bulk">…</button>`;
   nav += `<button data-tab="premium"${activeTab === 'premium' ? ' class="active"' : ''}><span>⭐</span> Premium</button>`;
   nav += `<button data-tab="settings"${activeTab === 'settings' ? ' class="active"' : ''}><span>⚙️</span> Settings</button>`;
 
