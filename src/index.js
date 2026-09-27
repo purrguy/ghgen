@@ -335,7 +335,7 @@ async function refreshAges(env) {
 // ============================================================
 //  STATIC ASSETS
 // ============================================================
-const STYLE_CSS = `:root{--bg:#0c0c0d;--bg2:#131316;--card:#18181b;--line:#27272a;--text:#e8e8ea;--muted:#8a8a93;--accent:#c9a227;--ok:#4caf7a;--bad:#e85d5d;--accent-bg:rgba(201,162,39,.12);--accent-line:rgba(201,162,39,.35)}
+const STYLE_CSS = `:root{--bg:#0c0c0d;--bg2:#131316;--card:#161619;--line:#26262b;--text:#eceaf0;--muted:#8f8f99;--accent:#c9a227;--accent-hi:#e8c84a;--accent-deep:#7a5f14;--ok:#4caf7a;--bad:#e85d5d;--accent-bg:rgba(201,162,39,.12);--accent-line:rgba(201,162,39,.35)}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Inter,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -450,6 +450,53 @@ body{background:radial-gradient(900px 320px at 70% -80px,rgba(201,162,39,.09),tr
 .btn-danger:hover{border-color:var(--bad)!important;color:var(--bad)!important}
 .claim-big{width:100%;padding:16px!important;font-size:15px!important;font-weight:800!important;letter-spacing:.02em}
 .claim-big:not(:disabled){box-shadow:0 6px 24px rgba(201,162,39,.25)}
+
+/* ============ GH gold-noir skin (ambient depth, buttery controls) ============ */
+.ambient{position:fixed;inset:0;z-index:0;pointer-events:none}
+.ambient-a{background:radial-gradient(52vw 52vw at -8% -10%,rgba(201,162,39,.13),transparent 62%);position:absolute;inset:0;filter:blur(70px);animation:drift1 24s ease-in-out infinite alternate}
+.ambient-b{background:radial-gradient(58vw 58vw at 108% 112%,rgba(122,95,20,.16),transparent 60%);position:absolute;inset:0;filter:blur(80px);animation:drift2 30s ease-in-out infinite alternate}
+@keyframes drift1{to{transform:translate(5vw,4vh) scale(1.07)}}
+@keyframes drift2{to{transform:translate(-4vw,-3vh) scale(1.1)}}
+.ambient-dots{background-image:radial-gradient(rgba(236,234,240,.055) 1px,transparent 1px);background-size:24px 24px;position:absolute;inset:0;-webkit-mask-image:radial-gradient(ellipse 100% 75% at 50% 0%,#000 30%,transparent 100%);mask-image:radial-gradient(ellipse 100% 75% at 50% 0%,#000 30%,transparent 100%)}
+.ambient-noise{position:absolute;inset:0;opacity:.5;mix-blend-mode:overlay;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 0.85 0 0 0 0 0.4 0 0 0 0.04 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>")}
+header.nav,section,footer,.layout{position:relative;z-index:1}
+::selection{background:rgba(201,162,39,.32);color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#2c2c33;border-radius:6px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--accent-deep)}
+button,.btn{transition:filter .16s,transform .12s,box-shadow .16s,background .16s,border-color .16s,color .16s}
+button:active:not(:disabled),.btn:active:not(:disabled){transform:translateY(1px)}
+button.primary{background:linear-gradient(180deg,var(--accent-hi) 0,var(--accent) 45%,var(--accent-deep) 130%);color:#141005;border:1px solid rgba(232,200,74,.55);text-shadow:0 1px 0 rgba(255,255,255,.25);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(0,0,0,.28),0 6px 22px rgba(201,162,39,.22)}
+button.primary:hover:not(:disabled){filter:brightness(1.07)}
+button.primary:active:not(:disabled){box-shadow:inset 0 1px 0 rgba(255,255,255,.2),inset 0 -1px 0 rgba(0,0,0,.3)}
+button.primary:disabled{background:rgba(236,234,240,.05);color:var(--muted);border-color:var(--line);box-shadow:none;text-shadow:none}
+.card{box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 18px 50px rgba(0,0,0,.42)}
+input,select,textarea{transition:border-color .16s,box-shadow .16s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(201,162,39,.55);box-shadow:0 0 0 3px rgba(201,162,39,.14)}
+.cat-item{transition:background .15s,border-color .15s,transform .12s}
+.cat-item:hover:not(.disabled){transform:translateY(-1px)}
+.cat-item:active:not(.disabled){transform:translateY(1px) scale(.995)}
+.cat-item.active{box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 4px 18px rgba(201,162,39,.16)}
+.side-nav button{transition:background .15s,color .15s,transform .12s}
+.side-nav button:active{transform:translateY(1px)}
+.brand-mark{background:linear-gradient(180deg,#23231a,#141410);border:1px solid var(--accent);box-shadow:0 0 14px rgba(201,162,39,.35),inset 0 1px 0 rgba(255,255,255,.12)}
+.hero{box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 18px 50px rgba(0,0,0,.42)}
+.hero .big{letter-spacing:-.035em}
+.hero .bar i{background:linear-gradient(90deg,var(--accent-deep),var(--accent),var(--accent-hi))}
+.badge{letter-spacing:.02em}
+.toast{box-shadow:0 12px 40px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06)}
+.reveal{transition:border-color .15s,color .15s}
+.modal,.auth-tabs{box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.auth-tabs button{transition:background .15s,color .15s}
+.link-btn{transition:color .15s}
+@media (prefers-reduced-motion:reduce){.ambient-a,.ambient-b{animation:none}.pane.active{animation:none}.toast{animation:none}}
+.cat-header{display:flex;align-items:center;gap:9px}
+.cat-header::before{content:'';width:15px;height:1px;background:var(--accent);flex:none;opacity:.8}
+.side-nav button.active{box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 4px 16px rgba(201,162,39,.14)}
+.limit-banner{box-shadow:0 8px 30px rgba(232,93,93,.12)}
+.hero .kicker{display:flex;align-items:center;gap:8px}
+.hero .kicker::before{content:'';width:16px;height:1px;background:var(--accent)}
 `;
 
 // ============================================================
@@ -473,6 +520,7 @@ function pageShell(title, content, activeTab) {
 <link rel="stylesheet" href="/static/style.css"/>
 </head>
 <body>
+<div class="ambient" aria-hidden="true"><div class="ambient-a"></div><div class="ambient-b"></div><div class="ambient-dots"></div><div class="ambient-noise"></div></div>
 <div class="layout">
   <aside class="sidebar">
     <div class="logo"><div class="brand-mark">GH</div><span>GHGen</span></div>
