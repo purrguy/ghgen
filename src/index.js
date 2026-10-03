@@ -182,6 +182,14 @@ async function ensureMigrations(env) {
     await env.DB.prepare(
       `CREATE INDEX IF NOT EXISTS idx_pool_issued_to ON ghgen_pool(issued_to)`
     ).run();
+    // Avatar cache: Roblox username (lowercased) -> headshot URL.
+    // Client-side lookup is unreliable (CORS), so the worker resolves
+    // once and serves cached URLs to every client forever after.
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS avatar_cache (
+         username TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
+         thumb TEXT NOT NULL, updated INTEGER NOT NULL)`
+    ).run();
   } catch (e) {
     console.error("ensureMigrations:", e);
   }
@@ -234,6 +242,55 @@ async function decryptPayload(env, stored) {
   const ct = b64ToBytes(ctB64);
   const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
   return JSON.parse(new TextDecoder().decode(pt));
+}
+
+// ============================================================
+//  ROBLOX AVATARS (server-side: browsers get CORS-blocked here)
+// ============================================================
+async function fetchTimeout(url, opts, ms) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => { try { ctl.abort(); } catch {} }, ms || 5000);
+  try {
+    return await fetch(url, { ...(opts || {}), signal: ctl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function resolveAvatar(env, username) {
+  const key = String(username || "").toLowerCase();
+  if (!key) return null;
+  try {
+    const hit = await env.DB.prepare(
+      `SELECT user_id, thumb, updated FROM avatar_cache WHERE username = ? LIMIT 1`
+    ).bind(key).first();
+    // Refresh monthly; cache hits keep history instant.
+    if (hit && hit.thumb && now() - Number(hit.updated || 0) < 30 * 86400) return hit.thumb;
+  } catch {}
+  try {
+    const r = await fetchTimeout("https://users.roblox.com/v1/usernames/users", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }),
+    }, 5000);
+    const d = await r.json();
+    const id = d && d.data && d.data[0] && d.data[0].id;
+    if (!id) return null;
+    const t = await fetchTimeout(
+      "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" + id +
+      "&size=150x150&format=Png&isCircular=false", {}, 5000);
+    const td = await t.json();
+    const url = td && td.data && td.data[0] && td.data[0].imageUrl;
+    if (!url) return null;
+    try {
+      await env.DB.prepare(
+        `INSERT INTO avatar_cache (username, user_id, thumb, updated) VALUES (?, ?, ?, ?)
+         ON CONFLICT(username) DO UPDATE SET user_id=excluded.user_id, thumb=excluded.thumb, updated=excluded.updated`
+      ).bind(key, id, url, now()).run();
+    } catch {}
+    return url;
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================
@@ -411,15 +468,22 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .acc-preview .v.reveal.copied{color:var(--ok);border-color:var(--ok)}
 /* credential cells: never let one long value stretch the page */
 .pwcell{max-width:230px}
-.pwval{display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;cursor:pointer}
+.pwval{display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;cursor:pointer}
 .pwval.open{white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:210px}
-.eyebtn{display:inline-grid;place-items:center;width:26px;height:26px;margin-left:8px;border-radius:7px;border:1px solid var(--line);background:var(--bg2);color:var(--muted);font-size:13px;cursor:pointer;vertical-align:bottom;font-family:inherit}
+.eyebtn{display:inline-grid;place-items:center;width:26px;height:26px;margin-left:8px;border-radius:7px;border:1px solid var(--line);background:var(--bg2);color:var(--muted);font-size:13px;line-height:1;cursor:pointer;vertical-align:middle;font-family:inherit;padding:0 0 2px 0}
 .eyebtn:hover{border-color:var(--accent);color:var(--accent)}
 .eyebtn.on{border-color:var(--accent);color:var(--accent)}
 .avatar{width:32px;height:32px;border-radius:50%;flex:none;background:linear-gradient(180deg,#23231a,#141410);border:1px solid var(--accent-line);display:inline-grid;place-items:center;font-size:12px;font-weight:800;color:var(--accent);overflow:hidden;vertical-align:middle}
 .avatar img{width:100%;height:100%;object-fit:cover;display:block}
 .avatar.big{width:56px;height:56px;font-size:18px}
 .pwval.copied{color:var(--ok)}
+.pwmodal-back{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:20px;animation:rise .18s ease}
+.pwmodal{background:var(--card);border:1px solid var(--accent-line);border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05);max-width:min(480px,92vw);width:100%;padding:22px;text-align:center}
+.pwmodal h3{font-size:14px;color:var(--muted);margin-bottom:12px;font-weight:600}
+.pwmodal .pwcode{font-family:ui-monospace,monospace;font-size:15px;line-height:1.7;color:var(--text);background:#0a0a0c;border:1px solid var(--accent-line);border-radius:10px;padding:14px;overflow-wrap:anywhere;word-break:break-word;cursor:pointer;user-select:all}
+.pwmodal .pwcode:hover{border-color:var(--accent)}
+.pwmodal .pwhint{font-size:12px;color:var(--muted);margin-top:10px}
+.pwmodal .pwhint.copied{color:var(--ok)}
 @media(max-width:760px){.pwcell{max-width:150px}.pwval{max-width:92px}.pwval.open{max-width:150px}}
 /* restyle pass: same gold-noir, calmer rhythm */
 .main{max-width:1060px}
@@ -1118,63 +1182,24 @@ const DASHBOARD_JS = `
   }
 
   var histPage = 0, histHasMore = false, histLoading = false, histTotal = 0;
-  var avatarCache = {}, avatarPending = {};
 
   function initialsOf(user) {
     var s = String(user || '').replace(/[^A-Za-z0-9]/g, '');
     return ((s.slice(0, 2) || '?')).toUpperCase();
   }
-  function avatarHTML(user, big) {
-    var key = String(user || '').toLowerCase();
-    var cached = avatarCache[key];
+  // Avatars arrive resolved from the server (a.av); the client never calls
+  // Roblox directly (browsers get CORS-blocked there). Missing = initials.
+  function avatarHTML(user, big, url) {
     var cls = 'avatar' + (big ? ' big' : '');
-    if (cached) return '<span class="' + cls + '"><img src="' + cached + '" alt="" loading="lazy" onerror="this.remove()"/></span>';
-    return '<span class="' + cls + '" data-avatar="' + esc(user || '?') + '">' + esc(initialsOf(user)) + '</span>';
-  }
-  function resolveAvatar(user) {
-    var key = String(user || '').toLowerCase();
-    if (!key || avatarCache[key] !== undefined || avatarPending[key]) return;
-    avatarPending[key] = true;
-    (async function() {
-      try {
-        var r = await fetch('https://users.roblox.com/v1/usernames/users', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ usernames: [user], excludeBannedUsers: false })
-        });
-        var d = await r.json();
-        var id = d && d.data && d.data[0] && d.data[0].id;
-        if (!id) throw 0;
-        var t = await fetch('https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=' + id + '&size=150x150&format=Png&isCircular=false');
-        var td = await t.json();
-        var url = td && td.data && td.data[0] && td.data[0].imageUrl;
-        avatarCache[key] = url || false;
-      } catch (e) { avatarCache[key] = false; }
-      delete avatarPending[key];
-      if (!avatarCache[key]) return;
-      document.querySelectorAll('[data-avatar]').forEach(function(el) {
-        if (String(el.dataset.avatar || '').toLowerCase() === key && !el.querySelector('img')) {
-          var img = document.createElement('img');
-          img.src = avatarCache[key]; img.alt = ''; img.loading = 'lazy';
-          img.onerror = function() { img.remove(); };
-          el.textContent = '';
-          el.appendChild(img);
-        }
-      });
-    })();
-  }
-  function queueAvatars(scope) {
-    var seen = {};
-    (scope || document).querySelectorAll('[data-avatar]').forEach(function(el) {
-      var key = String(el.dataset.avatar || '').toLowerCase();
-      if (key && !seen[key]) { seen[key] = true; resolveAvatar(el.dataset.avatar); }
-    });
+    if (url) return '<span class="' + cls + '"><img src="' + esc(url) + '" alt="" loading="lazy" onerror="this.remove()"/></span>';
+    return '<span class="' + cls + '">' + esc(initialsOf(user)) + '</span>';
   }
 
   function accountRow(a) {
     var ageText = a.age != null ? (a.age + 'd') : '—';
     var pv = encodeURIComponent(a.p || '');
     return '<tr>'
-      + '<td><span class="u-cell">' + avatarHTML(a.u) + '<span class="mono">' + esc(a.u) + '</span></span></td>'
+      + '<td><span class="u-cell">' + avatarHTML(a.u, false, a.av) + '<span class="mono">' + esc(a.u) + '</span></span></td>'
       + '<td class="pwcell"><span class="pwval mono" data-copy="' + pv + '" title="click to copy">' + esc(mask(a.p)) + '</span><button class="eyebtn" data-eye="' + pv + '" title="reveal">👁</button></td>'
       + '<td>' + (esc(a.c || '') + (a.ci ? ', ' + esc(a.ci) : '') || '—') + (a.ip ? '<br><span class="muted mono">' + esc(a.ip) + '</span>' : '') + '</td>'
       + '<td class="muted">' + ageText + '</td>'
@@ -1195,6 +1220,47 @@ const DASHBOARD_JS = `
     }
   }
 
+  function openPwModal(raw) {
+    var back = document.getElementById('pwmodal-back');
+    if (!back) {
+      back = document.createElement('div');
+      back.id = 'pwmodal-back';
+      back.className = 'pwmodal-back';
+      back.innerHTML = '<div class="pwmodal"><h3>Password</h3>'
+        + '<div class="pwcode" id="pwmodal-code"></div>'
+        + '<div class="pwhint" id="pwmodal-hint">click the password to copy it</div></div>';
+      document.body.appendChild(back);
+      back.addEventListener('click', function(e) {
+        if (e.target === back) closePwModal();
+      });
+      document.getElementById('pwmodal-code').addEventListener('click', async function() {
+        var v = this.dataset.raw || '';
+        try {
+          await navigator.clipboard.writeText(v);
+          var h = document.getElementById('pwmodal-hint');
+          h.textContent = 'Copied to clipboard ✓';
+          h.classList.add('copied');
+        } catch (err) {
+          toast('Copy failed — select it manually', 'err');
+        }
+      });
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closePwModal();
+      });
+    }
+    var code = document.getElementById('pwmodal-code');
+    code.dataset.raw = raw;
+    code.textContent = raw;
+    var h = document.getElementById('pwmodal-hint');
+    h.textContent = 'click the password to copy it';
+    h.classList.remove('copied');
+    back.style.display = 'flex';
+  }
+  function closePwModal() {
+    var back = document.getElementById('pwmodal-back');
+    if (back) back.style.display = 'none';
+  }
+
   // One delegated listener for every eye/copy control on the page (history
   // table + preview + future pages): no per-row listeners, ever.
   if (!window.__ghgenDelegated) {
@@ -1207,15 +1273,7 @@ const DASHBOARD_JS = `
       try { raw = decodeURIComponent(t.hasAttribute('data-eye') ? t.dataset.eye : t.dataset.copy); }
       catch (err) { raw = ''; }
       if (t.hasAttribute('data-eye')) {
-        var cell = t.parentNode ? t.parentNode.querySelector('.pwval') : null;
-        if (!cell) return;
-        if (cell.dataset.revealed === '1') {
-          cell.textContent = mask(raw); cell.dataset.revealed = '0'; cell.classList.remove('open');
-          t.textContent = '👁'; t.classList.remove('on');
-        } else {
-          cell.textContent = raw; cell.dataset.revealed = '1'; cell.classList.add('open');
-          t.textContent = '🙈'; t.classList.add('on');
-        }
+        openPwModal(raw);
         return;
       }
       copyVal(t, raw);
@@ -1251,7 +1309,6 @@ const DASHBOARD_JS = `
       var cnt = document.getElementById('hist-count');
       if (cnt) cnt.textContent = 'Showing ' + el.querySelectorAll('tbody tr').length + ' of ' + histTotal;
       histPage += 1;
-      queueAvatars(el);
     } catch (e) {
       if (reset) el.innerHTML = '<p class="err">Could not load history.</p>';
     } finally {
@@ -1273,7 +1330,7 @@ const DASHBOARD_JS = `
     var loc = [acc.c, acc.ci].filter(Boolean).join(', ') || '—';
     var pv = encodeURIComponent(acc.p || '');
     var html = '<div class="acc-preview">';
-    html += '<div class="acc-head">' + avatarHTML(acc.u, true)
+    html += '<div class="acc-head">' + avatarHTML(acc.u, true, acc.av)
       + '<div><div class="who">' + esc(acc.u) + '</div>'
       + '<div class="muted">' + esc(loc) + ' · ' + esc(ageText) + '</div></div></div>';
     html += '<div class="cat-header" style="margin-top:14px">Login</div>';
@@ -1286,7 +1343,6 @@ const DASHBOARD_JS = `
     if (acc.ck) html += '<div class="row"><span class="k">Cookie</span><span class="v reveal reveal-cookie" data-copy="' + encodeURIComponent(acc.ck) + '">Copy cookie</span></div>';
     html += '</div>';
     body.innerHTML = html;
-    queueAvatars(body);
   }
 
   function startCooldown(sec) {
@@ -1846,6 +1902,31 @@ async function handleAccounts(env, request) {
   for (const row of rows.results || []) {
     try { const dec = await decryptPayload(env, row.payload); accounts.push({ ...dec, issued_at: row.issued_at }); } catch (e) {}
   }
+  // Attach avatars: cache first (one query), resolve at most 8 new names
+  // per call so one heavy page can't stall the response.
+  try {
+    const missing = [...new Set(accounts.map(a => String(a.u || "").toLowerCase()).filter(k => k))];
+    if (missing.length) {
+      const ph = missing.map(() => "?").join(",");
+      const hits = await env.DB.prepare(
+        `SELECT username, thumb, updated FROM avatar_cache WHERE username IN (${ph})`
+      ).bind(...missing).all();
+      const cached = {};
+      for (const h of hits.results || []) {
+        if (h.thumb && now() - Number(h.updated || 0) < 30 * 86400) cached[h.username] = h.thumb;
+      }
+      const fresh = missing.filter(k => !cached[k]).slice(0, 8);
+      await Promise.all(fresh.map(async (k) => {
+        const orig = accounts.find(a => String(a.u || "").toLowerCase() === k);
+        const url = await resolveAvatar(env, orig ? orig.u : k);
+        if (url) cached[k] = url;
+      }));
+      for (const a of accounts) {
+        const url = cached[String(a.u || "").toLowerCase()];
+        if (url) a.av = url;
+      }
+    }
+  } catch {}
   return json({ ok: true, accounts, page, total, has_more: (page + 1) * limit < total });
 }
 
@@ -1916,7 +1997,9 @@ async function handleClaim(env, request) {
 
   try {
     const dec = await decryptPayload(env, res.payload);
-    return json({ ok: true, account: { ...dec, issued_at: t }, used: count + 1, limit: plan.limit });
+    let av = null;
+    try { av = await resolveAvatar(env, dec.u); } catch {}
+    return json({ ok: true, account: { ...dec, issued_at: t, av }, used: count + 1, limit: plan.limit });
   } catch (e) {
     return json({ ok: false, error: "decrypt_failed", message: String(e.message || e) }, 500);
   }
